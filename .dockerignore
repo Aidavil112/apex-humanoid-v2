@@ -1,0 +1,24 @@
+# deps & build output (rebuilt inside the image)
+node_modules
+dist
+build
+
+# git & editor
+.git
+.gitignore
+.vscode
+.idea
+
+# secrets — never bake keys into an image
+.env
+.env.*
+!.env.example
+firebase-applet-config.json
+*.pem
+
+# AI Studio scratch data (multi-MB, unused at runtime)
+.aistudio
+
+# logs & OS cruft
+*.log
+.DS_Store

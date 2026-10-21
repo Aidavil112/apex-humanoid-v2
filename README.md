@@ -25,3 +25,19 @@ npm run dev      # Starts full-stack server on port 3000
 npm run build    # Builds Vite frontend into dist/
 npm run lint     # Validates TypeScript types
 ```
+## Deploy
+
+Production-ready, dono raaste:
+
+| Method | Command / steps |
+|---|---|
+| **Render (blueprint)** | `render.yaml` included → Render → New + → Blueprint → repo select → Apply |
+| **Docker** | `docker build -t apex-humanoid . && docker run -p 3000:3000 --env-file .env apex-humanoid` |
+| **Docker Compose** | `docker compose up -d --build` |
+| **Any Node host** | `npm ci && npm run build && NODE_ENV=production npm start` |
+
+- Health check: `GET /health`
+- CI: `.github/workflows/ci.yml` — typecheck → build → server smoke test → Docker image build
+- Auto-deploy: `.github/workflows/deploy-render.yml` (repo secret `RENDER_DEPLOY_HOOK_URL`)
+
+Full guide (env vars, custom domain, DNS, troubleshooting): **[DEPLOY-V2.md](./DEPLOY-V2.md)**
