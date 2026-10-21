@@ -1256,7 +1256,7 @@ export class WebGLEngine {
         const isBuy = a.type === 'BUY';
         const color = isBuy ? '#00f5a0' : '#ffd13b';
         const border = isBuy ? 'rgba(0, 245, 160, 0.45)' : 'rgba(255, 209, 59, 0.45)';
-        const bg = 'rgba(4, 14, 22, 0.88)';
+        const bg = 'rgba(2, 8, 13, 0.97)';
 
         hctx.font = 'bold 11px monospace';
         const textW = hctx.measureText(a.text).width;
@@ -1265,7 +1265,9 @@ export class WebGLEngine {
         const bx = cx - boxW / 2;
         const by = a.y;
 
-        hctx.globalAlpha = alpha;
+        // keep the badge opaque much longer so it stays legible on top of the white core
+        const badgeAlpha = Math.min(1, alpha * 1.5);
+        hctx.globalAlpha = badgeAlpha;
         hctx.fillStyle = bg;
         hctx.beginPath();
         hctx.roundRect(bx, by, boxW, boxH, 6);
@@ -1278,6 +1280,7 @@ export class WebGLEngine {
         hctx.stroke();
         hctx.shadowBlur = 0;
 
+        hctx.globalAlpha = 1;
         hctx.fillStyle = color;
         hctx.fillText(a.text, bx + 14, by + 17);
       }
@@ -1369,6 +1372,10 @@ export class WebGLEngine {
     this.lastTime = now;
     const t = (now - this.t0) / 1000;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // Portrait phones pack the same ~311k points into a much smaller area, so additive
+    // blending saturates the core to flat white. Damp the *point size* (not the canvas
+    // resolution) so facial detail survives and fill-rate cost drops.
+    const pointDpr = dpr * (window.innerWidth < window.innerHeight ? 0.76 : 1);
 
     this.yaw += (this.targetYaw - this.yaw) * Math.min(1, dt * 3.2);
     this.pitch += (this.targetPitch - this.pitch) * Math.min(1, dt * 3.2);
@@ -1469,7 +1476,7 @@ export class WebGLEngine {
       gl.uniformMatrix4fv(this.BG.U.uViewProj, false, vp);
       gl.uniform1f(this.BG.U.uTime, t);
       gl.uniform1f(this.BG.U.uAmt, amt);
-      gl.uniform1f(this.BG.U.uDpr, dpr);
+      gl.uniform1f(this.BG.U.uDpr, pointDpr);
       gl.uniform1f(this.BG.U.uFocal, (this.canvas.height * 0.5) / Math.tan((25 * Math.PI) / 180));
       gl.uniform3fv(this.BG.U.uAccent, this.accentCur);
       gl.uniform3fv(this.BG.U.uCoreCol, this.cur);
@@ -1479,10 +1486,10 @@ export class WebGLEngine {
     }
 
     if (this.photoMode && this.PHOTO?.ready) {
-      this.ORB.draw(vp, t, dpr, this.accentCur, clamp(amt, 0, 1));
-      this.PHOTO.draw(vp, t, dpr, this.density);
+      this.ORB.draw(vp, t, pointDpr, this.accentCur, clamp(amt, 0, 1));
+      this.PHOTO.draw(vp, t, pointDpr, this.density);
     } else {
-      this.ORB.draw(vp, t, dpr, this.accentCur, clamp(amt, 0, 1));
+      this.ORB.draw(vp, t, pointDpr, this.accentCur, clamp(amt, 0, 1));
 
       gl.uniformMatrix4fv(this.U.uViewProj, false, vp);
       gl.uniform1f(this.U.uTime, t);
@@ -1491,7 +1498,7 @@ export class WebGLEngine {
       gl.uniform1f(this.U.uCoreAmt, amt);
       gl.uniform1f(this.U.uHeartPulse, this.heartPulse);
       gl.uniform1f(this.U.uAssemble, this.assemble);
-      gl.uniform1f(this.U.uDpr, dpr);
+      gl.uniform1f(this.U.uDpr, pointDpr);
       gl.uniform1f(this.U.uDensity, this.density);
       gl.uniform1f(this.U.uFocal, (this.canvas.height * 0.5) / Math.tan((25 * Math.PI) / 180));
       gl.uniform3fv(this.U.uCoreCol, this.cur);

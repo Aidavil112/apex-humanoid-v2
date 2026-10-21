@@ -932,7 +932,9 @@ export const App: React.FC = () => {
       {/* 3D WebGL Canvas Layer */}
       <div className="fixed inset-0 pointer-events-none">
         <canvas ref={canvasRef} className="w-full h-full pointer-events-auto cursor-crosshair" />
-        <canvas ref={hudCanvasRef} className="absolute inset-0 pointer-events-none opacity-80" />
+        {/* w-full h-full is required: a <canvas> is a replaced element, so inset-0 alone
+            keeps its intrinsic (attribute) pixel size and overflows small screens. */}
+        <canvas ref={hudCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
       </div>
 
       {/* Cyberpunk Vignette & Floor Glow */}

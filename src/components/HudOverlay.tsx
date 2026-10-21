@@ -48,15 +48,15 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
   return (
     <div className="fixed inset-0 pointer-events-none select-none z-10">
       {/* Top Left Brand Telemetry (Clean, unblocking humanoid) */}
-      <div className="absolute top-6 left-6 text-[10.5px] tracking-[0.22em] text-[#5d90ae] uppercase leading-relaxed pointer-events-auto">
-        <b className="text-[#bfe6ff] tracking-[0.3em] block font-semibold">APEX HUMANOID</b>
-        <span className="text-[#2d556d]">rebuilt · raw webgl2 · sentiment ai</span>
+      <div className="absolute top-4 left-4 sm:top-6 sm:left-6 text-[9.5px] sm:text-[10.5px] tracking-[0.16em] sm:tracking-[0.22em] text-[#5d90ae] uppercase leading-relaxed pointer-events-auto max-w-[52vw] sm:max-w-none">
+        <b className="text-[#bfe6ff] tracking-[0.2em] sm:tracking-[0.3em] block font-semibold whitespace-nowrap">APEX HUMANOID</b>
+        <span className="text-[#2d556d] hidden sm:inline">rebuilt · raw webgl2 · sentiment ai</span>
       </div>
 
       {/* Top Right Status, Sentiment & Biometrics */}
-      <div className="absolute top-6 right-6 text-right text-[10px] tracking-[0.22em] text-[#5d90ae] uppercase pointer-events-auto">
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-6 text-right text-[9px] sm:text-[10px] tracking-[0.14em] sm:tracking-[0.22em] text-[#5d90ae] uppercase pointer-events-auto">
         <div className="flex items-center justify-end gap-2">
-          <span>status:</span>
+          <span className="hidden sm:inline">status:</span>
           <b style={{ color: moodColor }} className="font-semibold tracking-[0.2em] transition-colors duration-300">
             {mood}
           </b>
@@ -88,7 +88,7 @@ export const HudOverlay: React.FC<HudOverlayProps> = ({
             </span>
           </div>
         )}
-        <span className="text-[#2d556d] text-[9.5px] block mt-0.5">
+        <span className="text-[#2d556d] text-[9.5px] hidden sm:block mt-0.5">
           {fps > 0 ? `${fps} fps · ${(points / 1000).toFixed(0)}k pts` : '— fps'}
         </span>
       </div>
