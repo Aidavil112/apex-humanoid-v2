@@ -27,6 +27,10 @@ npm run lint     # Validates TypeScript types
 ```
 ## Deploy
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Aidavil112/apex-humanoid-v2)
+
+One-click (ya manual 3 steps): **[DEPLOY-NOW.md](./DEPLOY-NOW.md)**
+
 Production-ready, dono raaste:
 
 | Method | Command / steps |
