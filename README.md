@@ -41,3 +41,10 @@ Production-ready, dono raaste:
 - Auto-deploy: `.github/workflows/deploy-render.yml` (repo secret `RENDER_DEPLOY_HOOK_URL`)
 
 Full guide (env vars, custom domain, DNS, troubleshooting): **[DEPLOY-V2.md](./DEPLOY-V2.md)**
+
+## Android / mobile
+
+PWA-ready — Chrome se "Add to Home screen" karke fullscreen app ki tarah chalao.
+Termux / Codespaces se phone pe hi build + deploy bhi ho jata hai.
+
+**[ANDROID.md](./ANDROID.md)** — complete guide (Termux commands, HTTPS/mic notes, Play Store options)
