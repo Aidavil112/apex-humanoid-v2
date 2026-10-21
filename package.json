@@ -2,7 +2,7 @@
   "name": "apex-humanoid",
   "version": "1.0.0",
   "private": true,
-  "description": "APEX Humanoid rebuild \u2014 WebGL2 point-cloud face + optional ElevenLabs voice",
+  "description": "APEX Humanoid rebuild — WebGL2 point-cloud face + optional ElevenLabs voice",
   "main": "server.js",
   "scripts": {
     "dev": "tsx server.ts",
@@ -39,6 +39,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.0.7",
-    "vite": "^6.1.1"
+    "vite": "^6.1.1",
+    "wrangler": "^3.114.17"
   }
 }
