@@ -2,14 +2,18 @@
   "name": "apex-humanoid",
   "version": "1.0.0",
   "private": true,
-  "description": "APEX Humanoid rebuild — WebGL2 point-cloud face + optional ElevenLabs voice",
+  "description": "APEX Humanoid rebuild \u2014 WebGL2 point-cloud face + optional ElevenLabs voice",
   "main": "server.js",
   "scripts": {
     "dev": "tsx server.ts",
     "build": "vite build",
     "prestart": "vite build",
     "start": "tsx server.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "telegram": "tsx telegram.ts",
+    "telegram:info": "tsx scripts/telegram-setup.ts info",
+    "telegram:webhook": "tsx scripts/telegram-setup.ts webhook",
+    "telegram:poll": "tsx scripts/telegram-setup.ts poll"
   },
   "engines": {
     "node": ">=18"

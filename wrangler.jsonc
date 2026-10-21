@@ -1,0 +1,5 @@
+{
+  "name": "apex-telegram-bot",
+  "main": "cloudflare-bot/worker.js",
+  "compatibility_date": "2025-01-01"
+}

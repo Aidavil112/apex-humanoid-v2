@@ -279,6 +279,8 @@ export class WebGLEngine {
   private fpsT: number = performance.now();
   public onFpsUpdate?: (fps: number, points: number) => void;
   private running: boolean = true;
+  /** Master power: when paused, frame() returns immediately and the canvas is blacked out. */
+  public paused: boolean = false;
 
   constructor(canvas: HTMLCanvasElement, hudCanvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -1366,7 +1368,7 @@ export class WebGLEngine {
   }
 
   public frame(now: number) {
-    if (!this.running) return;
+    if (!this.running || this.paused) return;
     this.resize();
     const dt = Math.min(0.1, (now - this.lastTime) / 1000);
     this.lastTime = now;
@@ -1522,6 +1524,37 @@ export class WebGLEngine {
       this.onFpsUpdate?.(fps, points);
       this.frames = 0;
       this.fpsT = now;
+    }
+  }
+
+  /** Master power switch. Pausing stops GPU work and blackens both canvases;
+      resuming rewinds the clock so animations don't jump. */
+  public setPaused(on: boolean) {
+    if (this.paused === on) return;
+    this.paused = on;
+    if (on) {
+      this.blackout();
+    } else {
+      this.lastTime = performance.now();
+      this.blackout(false);
+    }
+  }
+
+  /** Clear the WebGL + HUD canvases to solid black (or restore the clear colour). */
+  private blackout(black: boolean = true) {
+    try {
+      const gl = this.gl;
+      // remember the scene's own clear colour and restore it on resume
+      if (black) gl.clearColor(0, 0, 0, 1);
+      else gl.clearColor(0.01, 0.02, 0.03, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      this.hctx.clearRect(0, 0, this.hudCanvas.width, this.hudCanvas.height);
+      if (black) {
+        this.hctx.fillStyle = '#000';
+        this.hctx.fillRect(0, 0, this.hudCanvas.width, this.hudCanvas.height);
+      }
+    } catch {
+      /* context may already be lost — nothing to do */
     }
   }
 

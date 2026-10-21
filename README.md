@@ -46,6 +46,25 @@ Production-ready, dono raaste:
 
 Full guide (env vars, custom domain, DNS, troubleshooting): **[DEPLOY-V2.md](./DEPLOY-V2.md)**
 
+## Telegram bot
+
+Do bots ready hain — free serverless (Cloudflare Worker) ya full-control Node bot:
+
+```bash
+npm run telegram            # polling mode (token .env me daalo)
+npm run telegram:webhook <url>   # webhook register
+npm run telegram:info       # token verify + webhook status
+```
+
+**[TELEGRAM.md](./TELEGRAM.md)** — setup + "API key kahan daalein" ka exact jawab
+
+## Free hosting (private repo bhi)
+
+GitHub Pages **free mein sirf public repo** pe milta hai. Private repo ke saath free chahiye?
+**Cloudflare Pages** — repo private, hosting free, push pe auto-deploy.
+
+**[CLOUDFLARE.md](./CLOUDFLARE.md)** — 3-minute setup
+
 ## Android / mobile
 
 PWA-ready — Chrome se "Add to Home screen" karke fullscreen app ki tarah chalao.
