@@ -16,6 +16,39 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Storage guard: sandboxed iframes / privacy modes can throw on localStorage access. -->
+    <script>
+      (function () {
+        var shims = {};
+        function makeShim() {
+          var mem = {};
+          return {
+            getItem: function (k) { k = String(k); return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+            setItem: function (k, v) { mem[String(k)] = String(v); },
+            removeItem: function (k) { delete mem[String(k)]; },
+            clear: function () { mem = {}; },
+            key: function (i) { var keys = Object.keys(mem); return i < keys.length ? keys[i] : null; },
+            get length() { return Object.keys(mem).length; }
+          };
+        }
+        ['localStorage', 'sessionStorage'].forEach(function (name) {
+          var blocked = false;
+          try {
+            var s = window[name];
+            if (!s) blocked = true;
+            else { s.setItem('__apex_probe__', '1'); s.removeItem('__apex_probe__'); }
+          } catch (e) { blocked = true; }
+          if (blocked) {
+            shims[name] = makeShim();
+            try {
+              Object.defineProperty(window, name, { configurable: true, get: function () { return shims[name]; } });
+            } catch (e) {
+              try { window[name] = shims[name]; } catch (e2) {}
+            }
+          }
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
