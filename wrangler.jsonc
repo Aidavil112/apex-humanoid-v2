@@ -1,5 +1,5 @@
 {
-  "name": "apex-telegram-bot",
+  "name": "apex-humanoid-v2",
   "main": "cloudflare-bot/worker.js",
   "compatibility_date": "2025-01-01"
 }

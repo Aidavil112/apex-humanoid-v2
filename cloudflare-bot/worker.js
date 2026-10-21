@@ -215,9 +215,14 @@ function renderSetupPage(env, origin, result) {
     </div>
     ${
       !hasToken || !hasGemini
-        ? `<p style="margin:12px 0 0;font-size:13px;color:#ffd480;line-height:1.5">
-            👉 Cloudflare Dashboard → is Worker pe jao → <b>Settings</b> → <b>Variables and Secrets</b> → <b>+ Add</b> karke dono keys save karo, phir ye page refresh karo.
-          </p>`
+        ? `<div style="margin:14px 0 0;font-size:13px;color:#ffd480;line-height:1.55">
+            👉 Neeche diye buttons se dono free keys nikalo aur Cloudflare <b>Variables and Secrets → + Add</b> mein save karo:
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
+              ${!hasToken ? `<a href="https://t.me/BotFather" target="_blank" style="padding:10px 14px;border-radius:9px;background:#13293d;color:#7fd8ff;text-decoration:none;font-weight:600">1️⃣ Telegram @BotFather kholo (/newbot → Token copy karo)</a>` : ''}
+              ${!hasGemini ? `<a href="https://aistudio.google.com/apikey" target="_blank" style="padding:10px 14px;border-radius:9px;background:#13293d;color:#7fd8ff;text-decoration:none;font-weight:600">2️⃣ Free Gemini API Key lo (Create API key → copy)</a>` : ''}
+              <a href="https://dash.cloudflare.com/?to=/:account/workers/services/view/apex-humanoid-v2/production/settings" target="_blank" style="padding:11px 14px;border-radius:9px;background:#f6821f;color:#111;text-decoration:none;font-weight:700;text-align:center">⚙️ Worker Settings kholo → Variables and Secrets → + Add</a>
+            </div>
+          </div>`
         : ''
     }
   </div>
