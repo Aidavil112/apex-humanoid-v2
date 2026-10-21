@@ -60,7 +60,8 @@ async function send(token, chatId, text, extra = {}) {
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 async function askGemini(key, text, history = []) {
-  const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+  const cleanKey = String(key).trim();
+  const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
   const contents = [
     ...history.slice(-8).map((h) => ({
       role: h.role === 'model' ? 'model' : 'user',
@@ -72,10 +73,13 @@ async function askGemini(key, text, history = []) {
   for (const m of models) {
     try {
       const r = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
         {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'x-goog-api-key': cleanKey,
+          },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
             contents,
