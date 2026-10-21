@@ -26,3 +26,8 @@ services:
         sync: false
       - key: COINDCX_API_SECRET
         sync: false
+      # Play Store / TWA — Digital Asset Links
+      - key: ANDROID_PACKAGE_NAME
+        sync: false
+      - key: ANDROID_SHA256_FINGERPRINTS
+        sync: false

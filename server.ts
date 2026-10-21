@@ -446,6 +446,42 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
+/* --- Android / PWA: Digital Asset Links (TWA verification) ---
+   Play Store TWA app apne domain ko verify karne ke liye ye file maangta hai.
+   Env vars:
+     ANDROID_PACKAGE_NAME        e.g. com.aidavil.apexhumanoid
+     ANDROID_SHA256_FINGERPRINTS comma separated SHA-256 cert fingerprints
+                                 (Play App Signing cert + local upload key cert)
+   Docs: https://developers.google.com/digital-asset-links */
+app.get(['/.well-known/assetlinks.json', '/assetlinks.json'], (req: Request, res: Response) => {
+  const packageName = process.env.ANDROID_PACKAGE_NAME || '';
+  const fingerprints = (process.env.ANDROID_SHA256_FINGERPRINTS || '')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+
+  res.setHeader('content-type', 'application/json');
+  res.setHeader('cache-control', 'public, max-age=300');
+
+  if (!packageName || fingerprints.length === 0) {
+    return res.status(404).json({
+      error: 'Digital Asset Links not configured',
+      hint: 'Set ANDROID_PACKAGE_NAME and ANDROID_SHA256_FINGERPRINTS env vars on your host.',
+    });
+  }
+
+  res.json([
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: packageName,
+        sha256_cert_fingerprints: fingerprints,
+      },
+    },
+  ]);
+});
+
 app.post('/chat', async (req: Request, res: Response) => {
   const { text, history } = req.body || {};
   const safeText = String(text || '').slice(0, 2000);

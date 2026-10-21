@@ -48,3 +48,7 @@ PWA-ready — Chrome se "Add to Home screen" karke fullscreen app ki tarah chala
 Termux / Codespaces se phone pe hi build + deploy bhi ho jata hai.
 
 **[ANDROID.md](./ANDROID.md)** — complete guide (Termux commands, HTTPS/mic notes, Play Store options)
+
+Play Store app chahiye? **TWA (Trusted Web Activity)** setup ready hai:
+`cd twa && DOMAIN=your-domain ./build.sh` → `.aab` → Play Console.
+Full steps: **[PLAYSTORE.md](./PLAYSTORE.md)**

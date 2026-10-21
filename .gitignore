@@ -20,3 +20,12 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .DS_Store
+
+# Android / TWA build output & signing material
+twa/android/
+twa/*.keystore
+twa/*.jks
+twa/*.aab
+twa/*.apk
+twa/*.log
+.bubblewrap/

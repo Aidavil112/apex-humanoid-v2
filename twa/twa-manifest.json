@@ -1,0 +1,43 @@
+{
+  "packageId": "com.aidavil.apexhumanoid",
+  "host": "REPLACE_WITH_YOUR_DOMAIN.onrender.com",
+  "name": "APEX Humanoid",
+  "launcherName": "APEX",
+  "display": "standalone",
+  "themeColor": "#04090E",
+  "themeColorDark": "#000000",
+  "navigationColor": "#04090E",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#04090E",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#04090E",
+  "enableNotifications": false,
+  "startUrl": "/?source=twa",
+  "iconUrl": "https://REPLACE_WITH_YOUR_DOMAIN.onrender.com/icon-512.png",
+  "maskableIconUrl": "https://REPLACE_WITH_YOUR_DOMAIN.onrender.com/icon-512.png",
+  "monochromeIconUrl": "https://REPLACE_WITH_YOUR_DOMAIN.onrender.com/icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "android"
+  },
+  "appVersionName": "1.0.0",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://REPLACE_WITH_YOUR_DOMAIN.onrender.com/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://REPLACE_WITH_YOUR_DOMAIN.onrender.com/",
+  "minSdkVersion": 21,
+  "orientation": "portrait",
+  "fingerprints": [],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": []
+}
