@@ -58,8 +58,14 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const busyRef = useRef(false);
 
+  const extractCleanToken = (raw: string) => {
+    const m = String(raw || '').match(/ya29\.[A-Za-z0-9._-]+/);
+    return m ? m[0] : String(raw || '').trim();
+  };
+
   const verifyYouTubeConnection = async (tokOverride?: string) => {
-    const tok = tokOverride !== undefined ? tokOverride.trim() : accessToken.trim();
+    const tok = extractCleanToken(tokOverride !== undefined ? tokOverride : accessToken);
+    if (tok && tok !== accessToken) setAccessToken(tok);
     setYtChecking(true);
     try {
       const r = await hubFetch('/yt/status', {

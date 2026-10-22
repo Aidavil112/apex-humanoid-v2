@@ -480,7 +480,9 @@ async function generateYtPlan(env, topic, lang = 'hi', scenesCount = 6) {
 /* ------------------- Automatic YouTube OAuth Token Helper ---------------- */
 
 async function resolveYouTubeAccessToken(env, requestToken) {
-  const direct = String(requestToken || '').trim();
+  const rawStr = String(requestToken || '').trim();
+  const yaMatch = rawStr.match(/ya29\.[A-Za-z0-9._-]+/);
+  const direct = yaMatch ? yaMatch[0] : rawStr;
   if (direct.length > 20) return direct;
 
   // Auto-refresh permanent OAuth token if user stored Client ID + Secret + Refresh Token!
