@@ -1,17 +1,10 @@
 /* ---------------------------------------------------------------------------
    APEX Humanoid — Telegram bot on Cloudflare Workers (100% FREE, 24x7)
    ---------------------------------------------------------------------------
-   Works both ways:
-     A) Create app -> Import GitHub repo (Aidavil112/apex-humanoid-v2) -> Deploy
-     B) Create app -> Hello World Worker -> Edit code -> Paste this file -> Deploy
-
-   Then in Worker -> Settings -> Variables and Secrets -> + Add:
-     - TELEGRAM_BOT_TOKEN      (Secret)  123456:AAH... (@BotFather -> /newbot)
-     - GEMINI_API_KEY          (Secret)  AIza... (https://aistudio.google.com/apikey)
-     - TELEGRAM_ALLOWED_CHATS  (Text)    optional chat id lock (/id se milega)
-     - TELEGRAM_WEBHOOK_SECRET (Secret)  optional secret lock
-
-   Finally, open your *.workers.dev link in Chrome and tap "Connect Bot Now"!
+   Brain chain (automatic failover — zero downtime!):
+     1. Google Gemini AI Studio (AIza... / AQ... keys via x-goog-api-key)
+     2. Google Vertex AI Express Mode (AQ... keys via aiplatform.googleapis.com)
+     3. Built-in Free Keyless AI fallback (Pollinations OpenAI-compatible API)
    --------------------------------------------------------------------------- */
 
 const TG = (token) => `https://api.telegram.org/bot${token}`;
@@ -24,12 +17,12 @@ Kuch bhi likho — AI turant jawab dega!
 /clear — memory reset
 /app — live 3D Humanoid link
 
-<i>24×7 Free · Cloudflare Workers + Gemini AI</i>`;
+<i>24×7 Free · Always-On AI Assistant</i>`;
 
 const SYSTEM_PROMPT =
-  'You are APEX Humanoid, a smart friendly AI assistant. ' +
+  'You are APEX Humanoid, a smart, warm, helpful AI assistant on Telegram created for the user. ' +
   'Reply naturally in the exact language/style the user uses (Hinglish, Hindi, or English). ' +
-  'Keep replies crisp and helpful (under 80 words unless asked for detail).';
+  'Keep replies clear, conversational, and concise (under 100 words unless user asks for detail).';
 
 async function tgCall(token, method, body = {}) {
   try {
@@ -73,67 +66,87 @@ async function callGoogleEndpoint(url, key, body) {
   try {
     j = JSON.parse(txt);
   } catch {}
-  return { ok: r.ok, status: r.status, json: j, errMsg: j?.error?.message || txt.slice(0, 160) };
+  return { ok: r.ok, status: r.status, json: j, errMsg: j?.error?.message || txt.slice(0, 140) };
 }
 
-async function askGemini(key, text, history = []) {
-  const cleanKey = String(key).trim();
-  const contents = [
-    { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
-    { role: 'model', parts: [{ text: 'Ready! Main APEX Humanoid hoon.' }] },
+async function askFreeFallbackAI(text, history = []) {
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
     ...history.slice(-8).map((h) => ({
-      role: h.role === 'model' ? 'model' : 'user',
-      parts: [{ text: String(h.text).slice(0, 800) }],
+      role: h.role === 'model' ? 'assistant' : 'user',
+      content: String(h.text).slice(0, 800),
     })),
-    { role: 'user', parts: [{ text }] },
+    { role: 'user', content: text },
   ];
-  const payload = {
-    contents,
-    generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
-  };
-
-  let lastErr = '';
-
-  // 1) Try Google AI Studio endpoint first (AIza... and AI Studio AQ... keys)
-  for (const m of ['gemini-2.5-flash', 'gemini-flash-latest']) {
-    try {
-      const res = await callGoogleEndpoint(
-        `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
-        cleanKey,
-        payload
-      );
-      if (res.ok) {
-        const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-        if (out.trim()) return out.trim();
-      }
-      lastErr = `AIStudio ${m} (${res.status}): ${res.errMsg}`;
-      // If key type belongs to Vertex AI Express Mode (401/403), jump straight to Vertex endpoint!
-      if (res.status === 401 || res.status === 403) break;
-    } catch (e) {
-      lastErr = e.message;
-    }
-  }
-
-  // 2) Try Google Cloud Vertex AI Express Mode endpoint (AQ... Vertex Express API keys!)
-  for (const m of ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']) {
-    try {
-      const res = await callGoogleEndpoint(
-        `https://aiplatform.googleapis.com/v1/publishers/google/models/${m}:generateContent`,
-        cleanKey,
-        payload
-      );
-      if (res.ok) {
-        const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-        if (out.trim()) return out.trim();
-      }
-      lastErr = `Vertex ${m} (${res.status}): ${res.errMsg}`;
-    } catch (e) {
-      lastErr = e.message;
-    }
-  }
-
-  throw new Error(lastErr || 'Gemini call failed');
+  const r = await fetch('https://text.pollinations.ai/openai', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ model: 'openai', messages }),
+  });
+  if (!r.ok) throw new Error(`fallback HTTP ${r.status}`);
+  const j = await r.json();
+  const out = j?.choices?.[0]?.message?.content || '';
+  if (!out.trim()) throw new Error('empty fallback reply');
+  return out.trim();
 }
+
+async function askBrain(env, text, history = []) {
+  const cleanKey = String(env.GEMINI_API_KEY || '').trim();
+
+  if (cleanKey) {
+    const contents = [
+      { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
+      { role: 'model', parts: [{ text: 'Samajh gaya! Main APEX Humanoid hoon.' }] },
+      ...history.slice(-8).map((h) => ({
+        role: h.role === 'model' ? 'model' : 'user',
+        parts: [{ text: String(h.text).slice(0, 800) }],
+      })),
+      { role: 'user', parts: [{ text }] },
+    ];
+    const payload = {
+      contents,
+      generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
+    };
+
+    // 1) Google AI Studio endpoint
+    for (const m of ['gemini-2.5-flash', 'gemini-flash-latest']) {
+      try {
+        const res = await callGoogleEndpoint(
+          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+          cleanKey,
+          payload
+        );
+        if (res.ok) {
+          const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+          if (out.trim()) return { text: out.trim(), engine: `gemini-aistudio:${m}` };
+        }
+        if (res.status === 401 || res.status === 403) break;
+      } catch {}
+    }
+
+    // 2) Google Cloud Vertex AI Express Mode endpoint (AQ... keys)
+    for (const m of ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']) {
+      try {
+        const res = await callGoogleEndpoint(
+          `https://aiplatform.googleapis.com/v1/publishers/google/models/${m}:generateContent`,
+          cleanKey,
+          payload
+        );
+        if (res.ok) {
+          const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+          if (out.trim()) return { text: out.trim(), engine: `gemini-vertex:${m}` };
+        }
+      } catch {}
+    }
+  }
+
+  // 3) Automatic zero-key AI fallback so the bot NEVER goes silent!
+  const freeReply = await askFreeFallbackAI(text, history);
+  return { text: freeReply, engine: 'apex-free-ai' };
+}
+
+// Lightweight in-memory history (per Worker isolate) + optional KV persistence
+const memStore = new Map();
 
 async function handleUpdate(update, env) {
   const token = env.TELEGRAM_BOT_TOKEN;
@@ -163,24 +176,16 @@ async function handleUpdate(update, env) {
     return send(token, chatId, `🌐 <b>APEX Humanoid Live App:</b>\n${appUrl}`);
   }
   if (raw === '/clear') {
+    memStore.delete(chatId);
     await env.APEX_KV?.delete(`hist:${chatId}`);
     return send(token, chatId, '🧹 Memory clear ho gayi.');
   }
 
-  if (!env.GEMINI_API_KEY) {
-    return send(
-      token,
-      chatId,
-      '⚠️ <code>GEMINI_API_KEY</code> abhi set nahi hai.\n\n' +
-        'Cloudflare → Worker → Settings → Variables and Secrets → + Add:\n' +
-        'Name: <code>GEMINI_API_KEY</code>\nValue: AIza... (aistudio.google.com/apikey se free)'
-    );
-  }
-
-  let history = [];
+  let history = memStore.get(chatId) || [];
   if (env.APEX_KV) {
     try {
-      history = (await env.APEX_KV.get(`hist:${chatId}`, 'json')) || [];
+      const kvHist = await env.APEX_KV.get(`hist:${chatId}`, 'json');
+      if (kvHist) history = kvHist;
     } catch {}
   }
 
@@ -188,14 +193,16 @@ async function handleUpdate(update, env) {
 
   let reply;
   try {
-    reply = await askGemini(env.GEMINI_API_KEY, raw, history);
+    const res = await askBrain(env, raw, history);
+    reply = res.text;
   } catch (e) {
-    reply = `⚠️ AI error: ${e.message}`;
+    reply = `⚠️ AI busy hai, 5 second baad dobara bhejo. (${e.message})`;
   }
 
+  const next = [...history, { role: 'user', text: raw }, { role: 'model', text: reply }].slice(-10);
+  memStore.set(chatId, next);
   if (env.APEX_KV) {
     try {
-      const next = [...history, { role: 'user', text: raw }, { role: 'model', text: reply }].slice(-10);
       await env.APEX_KV.put(`hist:${chatId}`, JSON.stringify(next), { expirationTtl: 86400 });
     } catch {}
   }
@@ -208,15 +215,17 @@ function renderSetupPage(env, origin, result) {
   const hasGemini = !!env.GEMINI_API_KEY;
   const hasSecret = !!env.TELEGRAM_WEBHOOK_SECRET;
 
-  const badge = (ok) =>
+  const badge = (ok, optionalText) =>
     ok
       ? '<span style="color:#2ef2a4;font-weight:700">✅ Added</span>'
-      : '<span style="color:#ff6b6b;font-weight:700">❌ Missing</span>';
+      : `<span style="color:#ffd480;font-weight:700">${optionalText || '❌ Missing'}</span>`;
 
   let resultBox = '';
   if (result) {
     if (result.ok) {
-      const botLink = result.username ? `<p style="margin:14px 0 0"><a href="https://t.me/${esc(result.username)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#2ef2a4;color:#041a12;font-weight:700;text-decoration:none">💬 Open @${esc(result.username)} in Telegram</a></p>` : '';
+      const botLink = result.username
+        ? `<p style="margin:14px 0 0"><a href="https://t.me/${esc(result.username)}" style="display:inline-block;padding:12px 20px;border-radius:10px;background:#2ef2a4;color:#041a12;font-weight:700;text-decoration:none">💬 Open @${esc(result.username)} in Telegram</a></p>`
+        : '';
       resultBox = `<div style="margin:16px 0;padding:16px;border-radius:12px;background:#09261b;border:1px solid #2ef2a4">
         <div style="color:#2ef2a4;font-weight:700;font-size:16px">🎉 Bot Connected Successfully!</div>
         <div style="color:#b8eed6;font-size:13px;margin-top:6px">Webhook linked to <code>${esc(origin)}/telegram</code></div>
@@ -243,29 +252,17 @@ function renderSetupPage(env, origin, result) {
   ${resultBox}
 
   <div style="padding:16px;border-radius:14px;background:#0c1824;border:1px solid rgba(79,210,255,0.2)">
-    <div style="font-weight:700;margin-bottom:12px;font-size:15px">Step 1: Keys Status</div>
+    <div style="font-weight:700;margin-bottom:12px;font-size:15px">Status</div>
     <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.07);font-size:14px">
       <code>TELEGRAM_BOT_TOKEN</code> ${badge(hasToken)}
     </div>
     <div style="display:flex;justify-content:space-between;padding:8px 0;font-size:14px">
-      <code>GEMINI_API_KEY</code> ${badge(hasGemini)}
+      <code>AI Brain</code> ${badge(true, '✅ Built-in Free AI Active')}${hasGemini ? ' <small style="color:#7fd8ff">(Gemini)</small>' : ''}
     </div>
-    ${
-      !hasToken || !hasGemini
-        ? `<div style="margin:14px 0 0;font-size:13px;color:#ffd480;line-height:1.55">
-            👉 Neeche diye buttons se dono free keys nikalo aur Cloudflare <b>Variables and Secrets → + Add</b> mein save karo:
-            <div style="display:flex;flex-direction:column;gap:8px;margin-top:10px">
-              ${!hasToken ? `<a href="https://t.me/BotFather" target="_blank" style="padding:10px 14px;border-radius:9px;background:#13293d;color:#7fd8ff;text-decoration:none;font-weight:600">1️⃣ Telegram @BotFather kholo (/newbot → Token copy karo)</a>` : ''}
-              ${!hasGemini ? `<a href="https://aistudio.google.com/apikey" target="_blank" style="padding:10px 14px;border-radius:9px;background:#13293d;color:#7fd8ff;text-decoration:none;font-weight:600">2️⃣ Free Gemini API Key lo (Create API key → copy)</a>` : ''}
-              <a href="https://dash.cloudflare.com/?to=/:account/workers/services/view/apex-humanoid-v2/production/settings" target="_blank" style="padding:11px 14px;border-radius:9px;background:#f6821f;color:#111;text-decoration:none;font-weight:700;text-align:center">⚙️ Worker Settings kholo → Variables and Secrets → + Add</a>
-            </div>
-          </div>`
-        : ''
-    }
   </div>
 
   <form method="GET" action="/setup" style="margin-top:16px;padding:16px;border-radius:14px;background:#0c1824;border:1px solid rgba(79,210,255,0.2)">
-    <div style="font-weight:700;margin-bottom:10px;font-size:15px">Step 2: 1-Tap Activate</div>
+    <div style="font-weight:700;margin-bottom:10px;font-size:15px">1-Tap Activate</div>
     ${
       hasSecret
         ? `<input name="secret" type="password" placeholder="Enter TELEGRAM_WEBHOOK_SECRET" required style="box-sizing:border-box;width:100%;padding:11px;margin-bottom:10px;border-radius:9px;border:1px solid #2b4c63;background:#061019;color:#fff;font-size:14px" />`
@@ -280,7 +277,7 @@ function renderSetupPage(env, origin, result) {
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
 
     // ---- 1-tap visual setup endpoint ----
@@ -325,14 +322,30 @@ export default {
       );
     }
 
-    // ---- JSON health ----
+    // ---- JSON health + real end-to-end AI test ----
     if (url.pathname === '/health') {
+      if (url.searchParams.get('ping_ai') === '1') {
+        const t0 = Date.now();
+        try {
+          const out = await askBrain(env, 'Hi bhai kaise ho?');
+          return new Response(
+            JSON.stringify({ ok: true, engine: out.engine, ms: Date.now() - t0, reply: out.text }),
+            { headers: { 'content-type': 'application/json; charset=utf-8' } }
+          );
+        } catch (e) {
+          return new Response(
+            JSON.stringify({ ok: false, ms: Date.now() - t0, error: e.message }),
+            { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } }
+          );
+        }
+      }
       return new Response(
         JSON.stringify({
           ok: true,
           bot: 'APEX Humanoid Telegram bot',
           configured: !!env.TELEGRAM_BOT_TOKEN,
-          brain: !!env.GEMINI_API_KEY,
+          geminiKeySet: !!env.GEMINI_API_KEY,
+          brainReady: true,
           kv: !!env.APEX_KV,
         }),
         { headers: { 'content-type': 'application/json' } }
@@ -346,7 +359,7 @@ export default {
       });
     }
 
-    // ---- Telegram webhook receiver ----
+    // ---- Telegram webhook receiver (await full completion so Cloudflare never drops reply!) ----
     if (request.method === 'POST' && url.pathname === '/telegram') {
       const expected = env.TELEGRAM_WEBHOOK_SECRET || '';
       if (expected) {
@@ -359,12 +372,11 @@ export default {
       } catch {
         return new Response('400 bad json', { status: 400 });
       }
-      const work = handleUpdate(update, env).catch((e) => console.error('handler', e.message));
-      if (ctx && typeof ctx.waitUntil === 'function') {
-        ctx.waitUntil(work);
-        return new Response('ok');
+      try {
+        await handleUpdate(update, env);
+      } catch (e) {
+        console.error('handler', e.message);
       }
-      await work;
       return new Response('ok');
     }
 
