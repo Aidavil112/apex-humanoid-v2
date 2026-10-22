@@ -93,45 +93,88 @@ function base64ToUint8(b64) {
 
 /* ---------------- Voice Synthesis (ElevenLabs + Free Workers TTS) -------- */
 
-async function synthesizeSpeechBytes(env, text, customVoiceId) {
+function cleanSecretValue(v) {
+  return String(v || '')
+    .trim()
+    .replace(/^['"`]+|['"`]+$/g, '')
+    .replace(/^(xi-api-key\s*:\s*|bearer\s+)/i, '')
+    .trim();
+}
+
+async function synthesizeSpeechBytes(env, text, customVoiceId, clientElKey) {
   const cleanText = String(text || '').trim().slice(0, 800);
   if (!cleanText) throw new Error('text required');
 
-  // 1) ElevenLabs HD Voice when key is provided
-  const elKey = String(env.ELEVENLABS_API_KEY || '').trim();
+  // 1) ElevenLabs HD Multilingual / Flash v2.5 Voice (supports client header key OR env secret)
+  const elKey = cleanSecretValue(clientElKey || env.ELEVENLABS_API_KEY || '');
   if (elKey) {
-    try {
-      const voiceId = String(customVoiceId || env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb').trim();
-      const modelId = String(env.ELEVENLABS_MODEL || 'eleven_multilingual_v2').trim();
-      const r = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'xi-api-key': elKey, accept: 'audio/mpeg' },
-          body: JSON.stringify({
-            text: cleanText,
-            model_id: modelId,
-            voice_settings: { stability: 0.45, similarity_boost: 0.75 },
-          }),
-        }
-      );
-      if (r.ok) return { bytes: await r.arrayBuffer(), mime: 'audio/mpeg' };
-    } catch {}
+    const primaryVoice = cleanSecretValue(customVoiceId || env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb');
+    const voicesToTry = primaryVoice === 'JBFqnCBsd6RMkjVDRZzb' ? [primaryVoice] : [primaryVoice, 'JBFqnCBsd6RMkjVDRZzb'];
+    const modelsToTry = ['eleven_flash_v2_5', 'eleven_multilingual_v2'];
+    for (const vId of voicesToTry) {
+      for (const mId of modelsToTry) {
+        try {
+          const r = await fetch(
+            `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vId)}?output_format=mp3_44100_128`,
+            {
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'xi-api-key': elKey, accept: 'audio/mpeg' },
+              body: JSON.stringify({
+                text: cleanText,
+                model_id: mId,
+                voice_settings: { stability: 0.42, similarity_boost: 0.78 },
+              }),
+            }
+          );
+          if (r.ok) {
+            const ab = await r.arrayBuffer();
+            if (ab.byteLength > 250) return { bytes: ab, mime: 'audio/mpeg', provider: `elevenlabs:${mId}` };
+          }
+          // If 401/403 (IP block or invalid key), don't waste 3 extra retries
+          if (r.status === 401) break;
+        } catch {}
+      }
+    }
   }
 
-  // 2) Free Zero-Key Cloudflare Workers AI TTS (@cf/myshell-ai/melotts / @cf/deepgram/aura-1)
-  if (env.AI && typeof env.AI.run === 'function') {
-    try {
-      const res = await env.AI.run('@cf/myshell-ai/melotts', { prompt: cleanText, lang: 'en' });
-      if (res?.audio) {
-        return { bytes: base64ToUint8(res.audio).buffer, mime: 'audio/mpeg' };
+  // 2) Natural Hindi / Hinglish Neural MP3 Voice (clean human Indian accent — ZERO robotic WAV!)
+  try {
+    const chunks = cleanText.match(/.{1,185}(\s|$)/g) || [cleanText.slice(0, 185)];
+    const parts = [];
+    let totalLen = 0;
+    for (const ch of chunks.slice(0, 4)) {
+      const q = encodeURIComponent(ch.trim());
+      if (!q) continue;
+      const gRes = await fetch(
+        `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl=hi&q=${q}`,
+        { headers: { 'user-agent': 'Mozilla/5.0' } }
+      );
+      if (gRes.ok) {
+        const u8 = new Uint8Array(await gRes.arrayBuffer());
+        if (u8.byteLength > 200) {
+          parts.push(u8);
+          totalLen += u8.byteLength;
+        }
       }
-    } catch {}
+    }
+    if (totalLen > 200) {
+      const merged = new Uint8Array(totalLen);
+      let off = 0;
+      for (const p of parts) {
+        merged.set(p, off);
+        off += p.byteLength;
+      }
+      return { bytes: merged.buffer, mime: 'audio/mpeg', provider: 'neural-hi-IN' };
+    }
+  } catch {}
+
+  // 3) Deepgram Aura-1 fallback
+  if (env.AI && typeof env.AI.run === 'function') {
     try {
       const res = await env.AI.run('@cf/deepgram/aura-1', { text: cleanText });
       if (res instanceof ReadableStream || res?.body) {
         const ab = await new Response(res).arrayBuffer();
-        if (ab.byteLength > 100) return { bytes: ab, mime: 'audio/mpeg' };
+        if (ab.byteLength > 100) return { bytes: ab, mime: 'audio/mpeg', provider: 'deepgram-aura' };
       }
     } catch {}
   }
@@ -1505,20 +1548,27 @@ export default {
           replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Ji boss, boliye — main tayyar hoon!';
         }
 
-        // Synthesize HD Voice right inside the same Worker call -> ZERO extra roundtrip!
+        // Synthesize HD Voice right inside the same Worker call (unless client plays Direct ElevenLabs on phone IP!)
         let audioBase64 = '';
         let mime = 'audio/mpeg';
-        try {
-          const tts = await synthesizeSpeechBytes(env, replyText);
-          mime = tts.mime || 'audio/mpeg';
-          const u8 = tts.bytes instanceof Uint8Array ? tts.bytes : new Uint8Array(tts.bytes);
-          let b = '';
-          const cs = 0x8000;
-          for (let i = 0; i < u8.length; i += cs) {
-            b += String.fromCharCode(...u8.subarray(i, i + cs));
-          }
-          audioBase64 = btoa(b);
-        } catch {}
+        let ttsProvider = 'client-direct-elevenlabs';
+        const skipServerTts = request.headers.get('x-skip-tts') === '1';
+        const hdrVoiceId = request.headers.get('x-elevenlabs-voice') || '';
+        const hdrElKey = request.headers.get('x-elevenlabs-key') || '';
+        if (!skipServerTts) {
+          try {
+            const tts = await synthesizeSpeechBytes(env, replyText, hdrVoiceId, hdrElKey);
+            mime = tts.mime || 'audio/mpeg';
+            ttsProvider = tts.provider || 'cloud';
+            const u8 = tts.bytes instanceof Uint8Array ? tts.bytes : new Uint8Array(tts.bytes);
+            let b = '';
+            const cs = 0x8000;
+            for (let i = 0; i < u8.length; i += cs) {
+              b += String.fromCharCode(...u8.subarray(i, i + cs));
+            }
+            audioBase64 = btoa(b);
+          } catch {}
+        }
 
         return jsonRes({
           ok: true,
@@ -1526,6 +1576,7 @@ export default {
           reply: replyText,
           action,
           payload: payloadData,
+          ttsProvider,
           audioBase64,
           mime,
         });
@@ -1563,12 +1614,54 @@ export default {
       }
     }
 
+    // ---- Safe ElevenLabs Diagnostic Endpoint (/tts-check, exposes ZERO secrets!) ----
+    if (request.method === 'GET' && url.pathname === '/tts-check') {
+      const elKey = cleanSecretValue(env.ELEVENLABS_API_KEY || '');
+      if (!elKey) {
+        return jsonRes({ ok: true, configured: false, reason: 'ELEVENLABS_API_KEY not set in Worker secrets' });
+      }
+      const vId = cleanSecretValue(env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb');
+      const r = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(vId)}?output_format=mp3_44100_128`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'xi-api-key': elKey, accept: 'audio/mpeg' },
+          body: JSON.stringify({
+            text: 'Namaste boss!',
+            model_id: 'eleven_flash_v2_5',
+            voice_settings: { stability: 0.42, similarity_boost: 0.78 },
+          }),
+        }
+      );
+      if (r.ok) {
+        const ab = await r.arrayBuffer();
+        return jsonRes({ ok: true, configured: true, elevenlabsWorking: true, bytes: ab.byteLength, voiceId: vId });
+      }
+      const errBody = await r.json().catch(() => ({}));
+      return jsonRes({
+        ok: true,
+        configured: true,
+        elevenlabsWorking: false,
+        httpStatus: r.status,
+        reason: errBody?.detail?.status || errBody?.detail || 'unknown',
+        message: errBody?.detail?.message || '',
+      });
+    }
+
     // ---- Voice Synthesis Endpoint (/yt/voice) ----
     if (request.method === 'POST' && url.pathname === '/yt/voice') {
       try {
         const body = await request.json();
-        const { bytes, mime } = await synthesizeSpeechBytes(env, String(body?.text || ''), body?.voiceId);
-        return new Response(bytes, { status: 200, headers: { 'content-type': mime, ...CORS_HEADERS } });
+        const { bytes, mime, provider } = await synthesizeSpeechBytes(
+          env,
+          String(body?.text || ''),
+          body?.voiceId,
+          body?.elevenApiKey
+        );
+        return new Response(bytes, {
+          status: 200,
+          headers: { 'content-type': mime, 'x-tts-provider': provider || 'cloud', ...CORS_HEADERS },
+        });
       } catch (e) {
         return jsonRes({ ok: false, error: e.message }, 502);
       }

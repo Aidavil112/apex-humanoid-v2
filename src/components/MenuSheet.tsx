@@ -26,6 +26,7 @@ interface MenuSheetProps {
   onOpenReel: () => void;
   onOpenTradingBot?: () => void;
   onOpenAgentCompany?: () => void;
+  onOpenElevenLabs?: () => void;
   langMode: string;
   onToggleLang: () => void;
   themes: ThemeConfig[];
@@ -65,6 +66,7 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
   onOpenReel,
   onOpenTradingBot,
   onOpenAgentCompany,
+  onOpenElevenLabs,
   langMode,
   onToggleLang,
   themes,
@@ -158,6 +160,34 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
       {/* Tab 1: Studio Apps & Autotrading */}
       {activeTab === 'apps' && (
         <div className="p-3 sm:p-3.5 flex flex-col gap-2 max-h-[55vh] overflow-y-auto">
+          {onOpenElevenLabs && (
+            <button
+              onClick={onOpenElevenLabs}
+              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(168,85,247,0.2)] to-[rgba(6,18,28,0.75)] border border-[rgba(192,132,252,0.5)] hover:border-[#d8b4fe] transition-all text-left shadow-[0_0_16px_rgba(168,85,247,0.18)]"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-[rgba(168,85,247,0.22)] border border-[rgba(192,132,252,0.5)] flex items-center justify-center text-lg">
+                  🎙️
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[13px] text-[#f3e8ff] tracking-wide">
+                      ElevenLabs HD Voice Studio
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(168,85,247,0.3)] text-[#e9d5ff] font-bold tracking-wider">
+                      HINDI + ENGLISH HD
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#d8b4fe] leading-snug">
+                    Paste API Key (sk_...) + Pick George, Brian, Aria, Sarah or Custom Voice ID
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-[#e9d5ff] group-hover:translate-x-1 transition-transform">
+                →
+              </span>
+            </button>
+          )}
           {onOpenTradingBot && (
             <button
               onClick={onOpenTradingBot}

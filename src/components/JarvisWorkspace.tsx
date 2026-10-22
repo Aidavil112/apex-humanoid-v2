@@ -36,6 +36,7 @@ interface JarvisWorkspaceProps {
   onDeleteMemory: (id: string) => void;
   onOpenTradingBot: () => void;
   onOpenYouTubeStudio: () => void;
+  onOpenElevenLabs?: () => void;
   onPowerOff: () => void;
 }
 
@@ -61,6 +62,7 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   onDeleteMemory,
   onOpenTradingBot,
   onOpenYouTubeStudio,
+  onOpenElevenLabs,
   onPowerOff,
 }) => {
   const [activeTab, setActiveTab] = useState<'home' | 'apps' | 'tasks' | 'memory' | 'skills'>('home');
@@ -276,6 +278,14 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
 
               {/* 1-Tap Quick Phone Actions Bar right on Home */}
               <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2">
+                {onOpenElevenLabs && (
+                  <button
+                    onClick={onOpenElevenLabs}
+                    className="px-2.5 py-1 rounded-full bg-[rgba(168,85,247,0.2)] border border-[rgba(192,132,252,0.55)] text-[#e9d5ff] text-[10.5px] font-bold cursor-pointer"
+                  >
+                    🎙️ ElevenLabs HD Voice
+                  </button>
+                )}
                 <button
                   onClick={onOpenTradingBot}
                   className="px-2.5 py-1 rounded-full bg-[rgba(255,148,77,0.16)] border border-[rgba(255,148,77,0.45)] text-[#ffc288] text-[10.5px] font-bold cursor-pointer"

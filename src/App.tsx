@@ -14,6 +14,8 @@ import { AudioWaveform } from './components/AudioWaveform';
 import { TradingBotModal } from './components/TradingBotModal';
 import { AgentCompanyModal } from './components/AgentCompanyModal';
 import { JarvisWorkspace, JarvisTaskItem, JarvisMemoryItem } from './components/JarvisWorkspace';
+import { ElevenLabsModal } from './components/ElevenLabsModal';
+import { fetchElevenLabsAudioDirect, loadElevenConfig } from './engine/elevenlabs';
 import { executePhoneAction, parseLocalPhoneCommand } from './engine/phoneBridge';
 import { useAutoTrader } from './hooks/useAutoTrader';
 import { analyzeSentiment } from './engine/sentiment';
@@ -102,6 +104,7 @@ export const App: React.FC = () => {
   });
   const [askOpen, setAskOpen] = useState(false);
   const [reelOpen, setReelOpen] = useState(false);
+  const [elevenOpen, setElevenOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
   const [jarvisOpen, setJarvisOpen] = useState<boolean>(true);
@@ -297,22 +300,37 @@ export const App: React.FC = () => {
     async (text: string, seq: number, onEnd?: () => void) => {
       if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
       try {
-        const voiceBody = JSON.stringify({ text, voice: langMode === 'hi-IN' ? 'Puck' : 'Kore' });
-        let res = await fetch('/yt/voice', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: voiceBody,
-        }).catch(() => null);
-        if (!res || !res.ok) {
-          res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/yt/voice', {
+        const elCfg = loadElevenConfig();
+        // 1) Direct Phone/Browser -> ElevenLabs HD TTS (100% bypasses Cloudflare Free-Tier IP blocks!)
+        let arrayBuf: ArrayBuffer | null = null;
+        if (elCfg.apiKey) {
+          arrayBuf = await fetchElevenLabsAudioDirect(text, elCfg);
+        }
+
+        // 2) Cloud Worker TTS (ElevenLabs Cloud Secret OR Clean Neural hi-IN HD MP3 fallback)
+        if (!arrayBuf) {
+          const voiceBody = JSON.stringify({
+            text,
+            voiceId: elCfg.voiceId,
+            elevenApiKey: elCfg.apiKey || undefined,
+            voice: langMode === 'hi-IN' ? 'Puck' : 'Kore',
+          });
+          let res = await fetch('/yt/voice', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: voiceBody,
-          });
+          }).catch(() => null);
+          if (!res || !res.ok) {
+            res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/yt/voice', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: voiceBody,
+            });
+          }
+          if (!res.ok) throw new Error('Voice fetch status ' + res.status);
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
+          arrayBuf = await res.arrayBuffer();
         }
-        if (!res.ok) throw new Error('Voice fetch status ' + res.status);
-        if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
-        const arrayBuf = await res.arrayBuffer();
         if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
 
         // Play directly through unlocked WebAudio context (NEVER blocked by mobile autoplay!)
@@ -662,12 +680,15 @@ export const App: React.FC = () => {
             .slice(0, 5)
             .map((m) => m.text)
             .join('; ');
+          const elCfgNow = loadElevenConfig();
           const res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/voice-turn', {
             method: 'POST',
             headers: {
               'content-type': 'audio/wav',
               'x-voice-history': encodeURIComponent(JSON.stringify(chatMemRef.current.slice(-6))),
               'x-wallet-context': encodeURIComponent(memSummary),
+              'x-elevenlabs-voice': elCfgNow.voiceId || 'JBFqnCBsd6RMkjVDRZzb',
+              ...(elCfgNow.apiKey ? { 'x-skip-tts': '1' } : {}),
             },
             body: wavBuf,
           });
@@ -1399,7 +1420,7 @@ export const App: React.FC = () => {
       {/* JARVIS OS / Izem Dark Eclipse Workspace (Reel #2: "Jarvis does literally everything") */}
       {entered && poweredOn && (
         <JarvisWorkspace
-          isOpen={jarvisOpen && !tradingBotOpen && !youtubeOpen && !reelOpen && !agentCompanyOpen}
+          isOpen={jarvisOpen && !tradingBotOpen && !youtubeOpen && !reelOpen && !agentCompanyOpen && !elevenOpen}
           onCloseTo3D={() => setJarvisOpen(false)}
           isListening={isListening}
           voiceStage={liveVoiceStage}
@@ -1423,6 +1444,7 @@ export const App: React.FC = () => {
           onDeleteMemory={deleteJarvisMemory}
           onOpenTradingBot={() => setTradingBotOpen(true)}
           onOpenYouTubeStudio={() => setYoutubeOpen(true)}
+          onOpenElevenLabs={() => setElevenOpen(true)}
           onPowerOff={togglePower}
         />
       )}
@@ -1519,7 +1541,18 @@ export const App: React.FC = () => {
               setMenuOpen(false);
               setAgentCompanyOpen(true);
             }}
+            onOpenElevenLabs={() => {
+              setMenuOpen(false);
+              setElevenOpen(true);
+            }}
             onClose={() => setMenuOpen(false)}
+          />
+
+          {/* ElevenLabs HD Voice Studio Modal */}
+          <ElevenLabsModal
+            isOpen={elevenOpen}
+            onClose={() => setElevenOpen(false)}
+            onConfigSaved={() => toast('🎙️ ElevenLabs HD Voice Active!', 3000)}
           />
 
           {/* Notification Toast */}
