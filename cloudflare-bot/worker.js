@@ -206,11 +206,14 @@ async function coindcxSignedGetWithBody(path, key, secret, payloadObj) {
 
   try {
     const { connect } = await import('cloudflare:sockets');
-    const socket = connect({ hostname: 'api.coindcx.com', port: 443 }, { secureTransport: 'on', allowHalfOpen: false });
+    const socket = connect({ hostname: 'api.coindcx.com', port: 443 }, { secureTransport: 'on', allowHalfOpen: true });
     const writer = socket.writable.getWriter();
     await writer.write(new TextEncoder().encode(rawReq));
-    await writer.close();
+    writer.releaseLock();
     const rawResp = await new Response(socket.readable).text();
+    try {
+      await socket.close();
+    } catch {}
     const jsonText = decodeHttpBody(rawResp);
     return JSON.parse(jsonText);
   } catch {
@@ -411,7 +414,7 @@ async function askBrain(env, text, history = [], sysPrompt = SYSTEM_PROMPT, maxT
       })),
       { role: 'user', parts: [{ text }] },
     ];
-    const payload = { contents, generationConfig: { temperature: 0.8, maxOutputTokens: maxTokens } };
+    const payload = { contents, generationConfig: { temperature: 0.8, maxOutputTokens: Math.max(maxTokens, 2048) } };
 
     for (const m of ['gemini-2.5-flash', 'gemini-flash-latest']) {
       try {
