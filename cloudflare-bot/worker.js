@@ -1423,12 +1423,52 @@ export default {
           action = 'ADD_MEMORY';
           payloadData = memMatch[1].trim();
           replyText = `Samajh gaya boss, maine apni Memory me save kar liya: "${payloadData}".`;
-        } else if (/(youtube\s*(studio|kholo|open)|shorts\s*studio)/i.test(low)) {
+        } else if (/(youtube\s*studio|shorts\s*studio)/i.test(low)) {
           action = 'OPEN_YOUTUBE';
           replyText = 'YouTube Autonomous Studio khol diya hai boss!';
         } else if (/(trading\s*(bot|kholo|open)|day\s*trader|chart\s*scan)/i.test(low)) {
           action = 'OPEN_TRADING_BOT';
           replyText = 'AI Day Trader Bot khol diya hai — saare CoinDCX charts scan ho rahe hain!';
+        } else if (/\b(alarm|alram)\b/i.test(low)) {
+          const m = low.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|subah|shaam|raat)?/i);
+          let hour = m ? parseInt(m[1], 10) : 7;
+          const minute = m && m[2] ? parseInt(m[2], 10) : 0;
+          const mer = m && m[3] ? m[3].toLowerCase() : '';
+          if ((mer === 'pm' || mer === 'shaam' || mer === 'raat') && hour < 12) hour += 12;
+          if ((mer === 'am' || mer === 'subah') && hour === 12) hour = 0;
+          action = 'SET_ALARM';
+          payloadData = { hour: hour % 24, minute: minute % 60, text: 'APEX Voice Alarm' };
+          replyText = `Done boss! Aapke phone me ${String(hour % 24).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')} ka alarm set kar diya hai!`;
+        } else if (/\b(timer)\b/i.test(low)) {
+          const m = low.match(/(\d+)\s*(min|minute|minutes|sec|second|seconds|ghante|hour|hours)?/i);
+          const n = m ? parseInt(m[1], 10) : 5;
+          const unit = m && m[2] ? m[2].toLowerCase() : 'min';
+          const seconds = unit.startsWith('s') ? n : unit.startsWith('h') || unit.startsWith('g') ? n * 3600 : n * 60;
+          action = 'SET_TIMER';
+          payloadData = { seconds, text: 'APEX Timer' };
+          replyText = `Timer shuru kar diya hai boss!`;
+        } else if (/\b(call|dial|phone\s*lagao|call\s*karo)\b/i.test(low) && /\d{5,}/.test(low)) {
+          const num = (low.match(/[\d+][\d\s-]{4,}/) || [''])[0].replace(/[^\d+]/g, '');
+          action = 'DIAL_PHONE';
+          payloadData = { phone: num };
+          replyText = `Phone dialer me ${num} laga diya hai boss!`;
+        } else if (/\b(whatsapp|instagram|insta|youtube|telegram|spotify|maps|google\s*maps|coindcx)\b/i.test(low) && /\b(open|kholo|khol|chalu|play|launch|start|lagao)\b/i.test(low)) {
+          const appName =
+            /whatsapp/i.test(low) ? 'whatsapp' :
+            /insta/i.test(low) ? 'instagram' :
+            /youtube/i.test(low) ? 'youtube' :
+            /telegram/i.test(low) ? 'telegram' :
+            /spotify/i.test(low) ? 'spotify' :
+            /coindcx/i.test(low) ? 'coindcx' : 'maps';
+          const qMatch = cleaned.match(/(?:youtube\s*(?:par|pe|on)?\s*(?:play|search|chalao|lagao)|play\s+on\s+youtube)\s+(.+)/i);
+          action = 'LAUNCH_APP';
+          payloadData = { app: appName, query: qMatch ? qMatch[1].trim() : '' };
+          replyText = `Ji boss, aapke phone par ${appName.toUpperCase()} khol diya hai!`;
+        } else if (/\b(wifi|wi-fi|bluetooth|settings|setting)\b/i.test(low) && /\b(open|kholo|khol|on|off|setting|settings)\b/i.test(low)) {
+          const sec = /wifi|wi-fi/i.test(low) ? 'wifi' : /bluetooth/i.test(low) ? 'bluetooth' : 'settings';
+          action = 'OPEN_SETTINGS';
+          payloadData = { app: sec };
+          replyText = `Aapke phone ki ${sec.toUpperCase()} settings khol di hain boss!`;
         } else {
           // Optional live web context when user asks fresh news / weather / latest info
           let liveWebSnippet = '';

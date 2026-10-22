@@ -700,7 +700,14 @@ export const App: React.FC = () => {
           ) {
             setTimeout(() => {
               executePhoneAction(j.action, j.payload);
-            }, 450);
+            }, 350);
+          } else if (j.heard) {
+            const localPhone = parseLocalPhoneCommand(j.heard);
+            if (localPhone) {
+              setTimeout(() => {
+                executePhoneAction(localPhone.action, localPhone.payload);
+              }, 350);
+            }
           }
 
           chatMemRef.current.push({ role: 'user', text: j.heard });
