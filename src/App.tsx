@@ -13,6 +13,7 @@ import { Toast } from './components/Toast';
 import { AudioWaveform } from './components/AudioWaveform';
 import { TradingBotModal } from './components/TradingBotModal';
 import { AgentCompanyModal } from './components/AgentCompanyModal';
+import { JarvisWorkspace, JarvisTaskItem, JarvisMemoryItem } from './components/JarvisWorkspace';
 import { useAutoTrader } from './hooks/useAutoTrader';
 import { analyzeSentiment } from './engine/sentiment';
 
@@ -102,6 +103,75 @@ export const App: React.FC = () => {
   const [reelOpen, setReelOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
+  const [jarvisOpen, setJarvisOpen] = useState<boolean>(true);
+  const [quietMode, setQuietMode] = useState<boolean>(false);
+  const quietModeRef = useRef<boolean>(false);
+  quietModeRef.current = quietMode;
+
+  const [jarvisTasks, setJarvisTasks] = useState<JarvisTaskItem[]>(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('jarvis_tasks') || '[]');
+      return Array.isArray(s) ? s : [];
+    } catch {
+      return [];
+    }
+  });
+  const [jarvisMemories, setJarvisMemories] = useState<JarvisMemoryItem[]>(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem('jarvis_memories') || '[]');
+      return Array.isArray(s) ? s : [];
+    } catch {
+      return [];
+    }
+  });
+  const jarvisMemoriesRef = useRef(jarvisMemories);
+  jarvisMemoriesRef.current = jarvisMemories;
+
+  const addJarvisTask = useCallback((title: string) => {
+    setJarvisTasks((prev) => {
+      const next = [
+        { id: `t-${Date.now()}`, title, done: false, createdAt: new Date().toLocaleTimeString('en-IN') },
+        ...prev,
+      ];
+      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const toggleJarvisTask = useCallback((id: string) => {
+    setJarvisTasks((prev) => {
+      const next = prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t));
+      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const deleteJarvisTask = useCallback((id: string) => {
+    setJarvisTasks((prev) => {
+      const next = prev.filter((t) => t.id !== id);
+      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const addJarvisMemory = useCallback((text: string) => {
+    setJarvisMemories((prev) => {
+      const next = [
+        { id: `m-${Date.now()}`, text, savedAt: new Date().toLocaleDateString('en-IN') },
+        ...prev,
+      ];
+      localStorage.setItem('jarvis_memories', JSON.stringify(next));
+      return next;
+    });
+  }, []);
+
+  const deleteJarvisMemory = useCallback((id: string) => {
+    setJarvisMemories((prev) => {
+      const next = prev.filter((m) => m.id !== id);
+      localStorage.setItem('jarvis_memories', JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const h = window.location.hash || '';
@@ -288,8 +358,15 @@ export const App: React.FC = () => {
       const seq = speechSeqRef.current + 1;
       cancelAllSpeech();
       speechSeqRef.current = seq;
-      liveSpeakingRef.current = true;
       setLiveBotText(text);
+      // Quiet Mode (from JARVIS OS sidebar): show text response silently without speaker audio!
+      if (quietModeRef.current) {
+        liveSpeakingRef.current = false;
+        setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+        onEnd?.();
+        return;
+      }
+      liveSpeakingRef.current = true;
       audio.ensureCtx();
 
       if (!activeSentimentRef.current || activeSentimentRef.current === 'idle') {
@@ -438,51 +515,42 @@ export const App: React.FC = () => {
         }
       }
 
-      // Live Voice Trading & Real CoinDCX Portfolio Commands!
-      const lowTxt = text.toLowerCase();
-      if (/(balance|wallet|portfolio|kitna paisa|kitne paise|mera fund)/i.test(lowTxt)) {
+      // JARVIS Personal OS Voice/Text Commands (Tasks, Memory, Open Modules — Trading stays strictly inside AI Trading Bot!)
+      const taskCmd = text.match(/(?:task\s*add\s*karo|add\s*task|remind\s*me\s*(?:to)?|yaad\s*dilana)\s*[:\-]?\s*(.+)/i);
+      if (taskCmd?.[1]) {
+        const t = taskCmd[1].trim();
+        addJarvisTask(t);
         setLiveUserText(text);
-        setLiveVoiceStage('thinking');
-        const synced = await autoTraderRef.current.syncLiveAccount();
-        const total = Number(synced?.totalInr ?? autoTraderRef.current.balance ?? 0).toFixed(2);
-        const spot = Number(synced?.spotInr ?? autoTraderRef.current.liveAccount.spotInr ?? 0).toFixed(2);
-        const reply = `Aapke real CoinDCX wallet me abhi total ${total} rupay hain, jisme Spot INR ${spot} rupay hai.`;
-        toast(`💰 ${reply}`, 5000);
+        const reply = `Bilkul boss, "${t}" aapke Tasks me add kar diya hai.`;
+        toast(`☑ ${reply}`, 3500);
         speak(reply, () => {
           busyRef.current = false;
         });
         return;
       }
-      if (/(auto\s*trad|trading\s*(on|chalu|start)|start\s*auto)/i.test(lowTxt) && !/(off|band|stop|rok)/i.test(lowTxt)) {
+      const memCmd = text.match(/(?:yaad\s*rakhna|remember\s*(?:that)?|save\s*memory)\s*[:\-]?\s*(.+)/i);
+      if (memCmd?.[1]) {
+        const m = memCmd[1].trim();
+        addJarvisMemory(m);
         setLiveUserText(text);
-        setLiveVoiceStage('thinking');
-        autoTraderRef.current.setAutoTrading(true);
-        const reply = 'Real CoinDCX Smart Auto Trading chalu kar di hai! Abhi best coin scan karke live order ja raha hai.';
-        toast(`🤖 ${reply}`, 5000);
+        const reply = `Samajh gaya boss, Memory me save kar liya: "${m}".`;
+        toast(`🧠 ${reply}`, 3500);
         speak(reply, () => {
           busyRef.current = false;
         });
         return;
       }
-      if (/(auto\s*trad.*(off|band|stop)|trading\s*(off|band|stop|rok)|stop\s*auto)/i.test(lowTxt)) {
-        setLiveUserText(text);
-        autoTraderRef.current.setAutoTrading(false);
-        const reply = 'Auto trading band kar di hai. Aapka wallet safe manual mode me hai.';
-        toast(`⏹ ${reply}`, 4500);
+      if (/(youtube\s*(studio|kholo|open)|shorts\s*studio)/i.test(text)) {
+        setYoutubeOpen(true);
+        const reply = 'YouTube Autonomous Studio khol diya hai boss!';
         speak(reply, () => {
           busyRef.current = false;
         });
         return;
       }
-      if (/(smart\s*trade|abhi\s*trade|coin\s*buy|bitcoin\s*buy|btc\s*buy)/i.test(lowTxt)) {
-        setLiveUserText(text);
-        setLiveVoiceStage('thinking');
-        const res = await autoTraderRef.current.runSmartTradeNow(true);
-        const reply =
-          res?.traded && res?.order
-            ? `Live order complete! ${res.order.market} me ${res.order.approxInr} rupay ka ${res.order.side} execute ho gaya.`
-            : `Market check kiya: ${res?.reason || res?.error || 'abhi wait kar rahe hain'}`;
-        toast(`⚡ ${reply}`, 5000);
+      if (/(trading\s*(bot|kholo|open)|day\s*trader|chart\s*scan)/i.test(text)) {
+        setTradingBotOpen(true);
+        const reply = 'AI Day Trader Bot khol diya hai!';
         speak(reply, () => {
           busyRef.current = false;
         });
@@ -575,14 +643,16 @@ export const App: React.FC = () => {
         }, 14000);
 
         try {
-          const acctNow = autoTraderRef.current.liveAccount;
-          const walletSummary = `Aapke CoinDCX wallet me total ${acctNow.totalInr.toFixed(2)} rupay hain, Spot INR ${acctNow.spotInr.toFixed(2)} rupay hai.`;
+          const memSummary = jarvisMemoriesRef.current
+            .slice(0, 5)
+            .map((m) => m.text)
+            .join('; ');
           const res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/voice-turn', {
             method: 'POST',
             headers: {
               'content-type': 'audio/wav',
               'x-voice-history': encodeURIComponent(JSON.stringify(chatMemRef.current.slice(-6))),
-              'x-wallet-context': encodeURIComponent(walletSummary),
+              'x-wallet-context': encodeURIComponent(memSummary),
             },
             body: wavBuf,
           });
@@ -602,8 +672,10 @@ export const App: React.FC = () => {
           setLiveBotText(j.reply);
           toast(`🎤 "${j.heard}"`, 2600);
 
-          if (j.action === 'AUTOTRADE_ON') autoTraderRef.current.setAutoTrading(true);
-          if (j.action === 'AUTOTRADE_OFF') autoTraderRef.current.setAutoTrading(false);
+          if (j.action === 'ADD_TASK' && j.payload) addJarvisTask(j.payload);
+          if (j.action === 'ADD_MEMORY' && j.payload) addJarvisMemory(j.payload);
+          if (j.action === 'OPEN_YOUTUBE') setYoutubeOpen(true);
+          if (j.action === 'OPEN_TRADING_BOT') setTradingBotOpen(true);
 
           chatMemRef.current.push({ role: 'user', text: j.heard });
           chatMemRef.current.push({ role: 'model', text: j.reply });
@@ -1263,8 +1335,8 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Bottom Floating Dock — stays visible both ON & FULL OFF as the master power switch */}
-      {entered && (
+      {/* Bottom Floating Dock — visible in 3D view & FULL OFF mode */}
+      {entered && (!jarvisOpen || !poweredOn) && (
         <Dock
           poweredOn={poweredOn}
           menuOpen={menuOpen}
@@ -1277,12 +1349,48 @@ export const App: React.FC = () => {
             setMenuOpen((prev) => !prev);
           }}
           onToggleMic={toggleMic}
+          onOpenJarvis={() => {
+            audio.ensureCtx();
+            audio.tick(0.6);
+            setJarvisOpen(true);
+          }}
           onOpenTrading={() => {
             audio.ensureCtx();
             audio.tick(0.6);
             setTradingBotOpen(true);
           }}
           onTestVoice={testVoice}
+        />
+      )}
+
+      {/* JARVIS OS / Izem Dark Eclipse Workspace (Reel #2: "Jarvis does literally everything") */}
+      {entered && poweredOn && (
+        <JarvisWorkspace
+          isOpen={jarvisOpen && !tradingBotOpen && !youtubeOpen && !reelOpen && !agentCompanyOpen}
+          onCloseTo3D={() => setJarvisOpen(false)}
+          isListening={isListening}
+          voiceStage={liveVoiceStage}
+          micLevel={micLevel}
+          userText={liveUserText}
+          botText={liveBotText}
+          quietMode={quietMode}
+          onToggleQuietMode={() => setQuietMode((v) => !v)}
+          onToggleCall={toggleMic}
+          onFlushSpeechNow={() => sendChunkNowRef.current?.()}
+          onSendTextCommand={(cmd) => {
+            cancelAllSpeech();
+            handleUtterance(cmd);
+          }}
+          tasks={jarvisTasks}
+          onAddTask={addJarvisTask}
+          onToggleTask={toggleJarvisTask}
+          onDeleteTask={deleteJarvisTask}
+          memories={jarvisMemories}
+          onAddMemory={addJarvisMemory}
+          onDeleteMemory={deleteJarvisMemory}
+          onOpenTradingBot={() => setTradingBotOpen(true)}
+          onOpenYouTubeStudio={() => setYoutubeOpen(true)}
+          onPowerOff={togglePower}
         />
       )}
 

@@ -3,6 +3,7 @@ import * as d3 from 'd3';
 import { MarketPairData, TradingPosition, TradeOrderLog, AutoAnalysisItem, MoodType } from '../types';
 import { LiveAccountSummary } from '../hooks/useAutoTrader';
 import { CryptoNewsModal } from './CryptoNewsModal';
+import { DayTraderSkillsPanel } from './DayTraderSkillsPanel';
 
 const GEO_HUBS = [
   { city: 'Mumbai', country: 'India', lat: 19.076, lng: 72.8777, label: 'CoinDCX IN' },
@@ -403,6 +404,13 @@ export const TradingBotModal: React.FC<TradingBotModalProps> = ({
               </div>
             )}
           </div>
+
+          {/* 11-SKILL AI DAY TRADER SCANNER + PLANNER + 10,000x TIME-MACHINE ODDS (REEL #1) */}
+          <DayTraderSkillsPanel
+            orderInrAmount={orderInrAmount}
+            orderBusy={orderBusy}
+            onApproveSetup={(sym) => onManualBuy(sym)}
+          />
 
           {/* BIG 1-TAP 24x7 SMART AUTO-TRADER + INSTANT LIVE EXECUTION BANNER */}
           <div className="p-3.5 rounded-xl bg-gradient-to-r from-[rgba(0,245,160,0.12)] via-[rgba(6,24,38,0.95)] to-[rgba(79,210,255,0.12)] border border-[#00f5a0] space-y-2.5">
