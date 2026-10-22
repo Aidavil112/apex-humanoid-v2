@@ -170,14 +170,14 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-[13px] text-[#e0fff3] tracking-wide">
-                      Algo Trading Bot
+                      CoinDCX Real Money Trading
                     </span>
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(0,245,160,0.25)] text-[#00f5a0] font-bold tracking-wider">
-                      AUTO ACTIVE
+                      LIVE MONEY
                     </span>
                   </div>
                   <p className="text-[11px] text-[#78c7ab] leading-snug">
-                    Background market analysis & simulated fake BUY/SELL execution
+                    100% Real CoinDCX Spot + Futures Balance &amp; Live BUY/SELL Execution
                   </p>
                 </div>
               </div>

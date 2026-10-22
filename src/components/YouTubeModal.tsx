@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { hubFetch } from '../engine/api';
 import { YtPlan, ContentPlan, TopicResearch, WorkflowJob, WorkflowStep } from '../types';
 
 interface YouTubeModalProps {
@@ -207,7 +208,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
     setWorkflowStatus('researching');
     setWorkflowProgress(15);
 
-    const r = await fetch('/agent/research', {
+    const r = await hubFetch('/agent/research', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ niche: targetNiche }),
@@ -225,7 +226,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
     setWorkflowStatus('scripting');
     setWorkflowProgress(35);
 
-    const pr = await fetch('/yt/plan', {
+    const pr = await hubFetch('/yt/plan', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ topic: targetTopic, lang, scenes: scenesCount }),
@@ -251,18 +252,11 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
       let ok = false;
       for (let retry = 0; retry < 2 && !ok; retry++) {
         try {
-          let vr = await fetch('/yt/voice', {
+          const vr = await hubFetch('/yt/voice', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ text: txt }),
-          }).catch(() => null);
-          if (!vr || !vr.ok) {
-            vr = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/yt/voice', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ text: txt }),
-            });
-          }
+          });
           if (vr.ok) {
             voices.push(await vr.arrayBuffer());
             ok = true;
@@ -397,7 +391,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
     });
     const videoBase64 = await base64Promise;
 
-    const res = await fetch('/yt/upload', {
+    const res = await hubFetch('/yt/upload', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -412,6 +406,22 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
 
     const j = await res.json();
     if (!res.ok) throw new Error(j.error || 'YouTube upload failed');
+
+    if (j.needsToken) {
+      const localUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = localUrl;
+      a.download = `${(planData.title || 'apex-short').replace(/[^\w\u0900-\u097F -]/g, '').slice(0, 46) || 'apex-short'}.webm`;
+      a.click();
+      try {
+        await navigator.clipboard.writeText(
+          `${planData.title}\n\n${planData.description}\n\n${(planData.tags || []).map((t) => '#' + t).join(' ')}`
+        );
+      } catch {}
+      addLog(`✅ HD Short Video + AI Voice downloaded & Title/Tags copied!`);
+      addLog(`ℹ️ Direct Channel Upload ke liye Settings tab me YouTube Token daalein ya Cloudflare me YOUTUBE_REFRESH_TOKEN set karein.`);
+      return { youtubeUrl: '', videoId: j.videoId || 'local-ready' };
+    }
 
     const ytUrl = j.youtubeUrl || `https://www.youtube.com/shorts/${j.videoId}`;
     setLastUploadedLink(ytUrl);
@@ -960,7 +970,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
             <button
               onClick={async () => {
                 if (!topic.trim() && !niche.trim()) return onToast('Please enter a topic');
-                const r = await fetch('/content/plan', {
+                const r = await hubFetch('/content/plan', {
                   method: 'POST',
                   headers: { 'content-type': 'application/json' },
                   body: JSON.stringify({ topic: topic.trim() || niche.trim(), lang }),

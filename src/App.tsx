@@ -1205,7 +1205,7 @@ export const App: React.FC = () => {
           {/* Notification Toast */}
           <Toast message={toastMessage} />
 
-          {/* Autonomous AI Trading Bot Modal (Auto-Trade & Auto-Analysis) */}
+          {/* Real Money CoinDCX Trading Terminal */}
           <TradingBotModal
             isOpen={tradingBotOpen}
             onClose={() => setTradingBotOpen(false)}
@@ -1216,6 +1216,15 @@ export const App: React.FC = () => {
             autoTrading={autoTrader.autoTrading}
             onToggleAutoTrading={() => autoTrader.setAutoTrading((v) => !v)}
             balance={autoTrader.balance}
+            liveAccount={autoTrader.liveAccount}
+            onSyncAccount={autoTrader.syncLiveAccount}
+            orderInrAmount={autoTrader.orderInrAmount}
+            onChangeOrderAmount={autoTrader.setOrderInrAmount}
+            walletType={autoTrader.walletType}
+            onChangeWalletType={autoTrader.setWalletType}
+            leverage={autoTrader.leverage}
+            onChangeLeverage={autoTrader.setLeverage}
+            orderBusy={autoTrader.orderBusy}
             positions={autoTrader.positions}
             tradeLogs={autoTrader.tradeLogs}
             analysisFeed={autoTrader.analysisFeed}
