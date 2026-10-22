@@ -373,7 +373,7 @@ async function callGoogleEndpoint(url, key, body) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(2500),
   });
   const txt = await r.text();
   let j = null;
@@ -396,7 +396,12 @@ async function askWorkersAI(env, text, history = [], sysPrompt = SYSTEM_PROMPT, 
   for (const m of ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct']) {
     try {
       const res = await env.AI.run(m, { messages, max_tokens: maxTokens, temperature: 0.75 });
-      const out = typeof res?.response === 'string' ? res.response : '';
+      const out =
+        typeof res?.response === 'string'
+          ? res.response
+          : res?.response
+          ? JSON.stringify(res.response)
+          : '';
       if (out.trim()) return { text: out.trim(), engine: m };
     } catch {}
   }
