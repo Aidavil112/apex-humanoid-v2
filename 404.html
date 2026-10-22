@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/apex-humanoid-v2/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apex-humanoid-v2/assets/icon-180-BjrxUms9.png" />
+    <link rel="icon" href="/apex-humanoid-v2/assets/icon-512-DjieLUa2.png" />
+    <meta name="theme-color" content="#04090e" />
+    <title>APEX Humanoid</title>
+    <meta name="description" content="Procedural WebGL2 particle humanoid robot with interactive voice agent, mood engine, gestures, and creative content tools." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta property="og:title" content="APEX Humanoid" />
+    <meta property="og:description" content="Procedural WebGL2 particle humanoid robot with interactive voice agent, mood engine, gestures, and creative content tools." />
+    <meta property="og:type" content="website" />
+    <script type="module" crossorigin src="/apex-humanoid-v2/assets/index-CODkAMCw.js"></script>
+    <link rel="stylesheet" crossorigin href="/apex-humanoid-v2/assets/index-DalsygDq.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Storage guard: sandboxed iframes / privacy modes can throw on localStorage access. -->
+    <script>
+      (function () {
+        var shims = {};
+        function makeShim() {
+          var mem = {};
+          return {
+            getItem: function (k) { k = String(k); return Object.prototype.hasOwnProperty.call(mem, k) ? mem[k] : null; },
+            setItem: function (k, v) { mem[String(k)] = String(v); },
+            removeItem: function (k) { delete mem[String(k)]; },
+            clear: function () { mem = {}; },
+            key: function (i) { var keys = Object.keys(mem); return i < keys.length ? keys[i] : null; },
+            get length() { return Object.keys(mem).length; }
+          };
+        }
+        ['localStorage', 'sessionStorage'].forEach(function (name) {
+          var blocked = false;
+          try {
+            var s = window[name];
+            if (!s) blocked = true;
+            else { s.setItem('__apex_probe__', '1'); s.removeItem('__apex_probe__'); }
+          } catch (e) { blocked = true; }
+          if (blocked) {
+            shims[name] = makeShim();
+            try {
+              Object.defineProperty(window, name, { configurable: true, get: function () { return shims[name]; } });
+            } catch (e) {
+              try { window[name] = shims[name]; } catch (e2) {}
+            }
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
