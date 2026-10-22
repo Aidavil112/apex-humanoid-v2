@@ -29,6 +29,9 @@ Kuch bhi likho — AI turant jawab dega!
 /yt &lt;topic&gt; — Automatic YouTube Shorts script + hook 🎬
 /price — Live CoinDCX BTC/ETH/SOL prices 📊
 /balance — Live CoinDCX wallet balance 💰
+/autotrade on — 24×7 Smart CoinDCX Auto-Trader ON 🤖
+/autotrade off — Auto-Trader OFF ⏹
+/autotrade now — Abhi turant 1 Smart Trade execute karo ⚡
 /voice on — Voice replies ON 🔊
 /voice off — Text replies mode
 /say &lt;text&gt; — AI Voice note bhejo 🎙️
@@ -519,6 +522,336 @@ async function resolveYouTubeAccessToken(env, requestToken) {
 
 const memStore = new Map();
 const voicePrefs = new Map();
+let marketMetaCache = { ts: 0, map: null };
+let autoTradeState = {
+  enabled: false,
+  tradeInr: 150,
+  lastTradeAt: 0,
+  lastCheckAt: 0,
+  lastAction: 'Ready — waiting for Auto-Trade ON',
+  lastOwnerChatId: '',
+  entries: {},
+};
+
+const PRECISION_FALLBACK = {
+  BTCINR: { prec: 5, minNotional: 100 },
+  ETHINR: { prec: 4, minNotional: 100 },
+  SOLINR: { prec: 3, minNotional: 100 },
+  XRPINR: { prec: 1, minNotional: 100 },
+  DOGEINR: { prec: 0, minNotional: 100 },
+  BTCUSDT: { prec: 5, minNotional: 5 },
+  ETHUSDT: { prec: 4, minNotional: 5 },
+  SOLUSDT: { prec: 3, minNotional: 5 },
+  XRPUSDT: { prec: 1, minNotional: 5 },
+};
+
+async function getCoinDcxMarketMetaMap() {
+  if (marketMetaCache.map && Date.now() - marketMetaCache.ts < 5 * 60 * 1000) {
+    return marketMetaCache.map;
+  }
+  const map = new Map();
+  for (const [k, v] of Object.entries(PRECISION_FALLBACK)) map.set(k, v);
+  try {
+    const r = await fetch('https://api.coindcx.com/exchange/v1/markets_details');
+    if (r.ok) {
+      const list = await r.json();
+      if (Array.isArray(list)) {
+        for (const m of list) {
+          if (m?.coindcx_name) {
+            map.set(String(m.coindcx_name).toUpperCase(), {
+              prec: typeof m.target_currency_precision === 'number' ? m.target_currency_precision : 4,
+              minNotional: Number(m.min_notional) || 100,
+              minQty: Number(m.min_quantity) || 0,
+              status: m.status || 'active',
+            });
+          }
+        }
+      }
+      marketMetaCache = { ts: Date.now(), map };
+    }
+  } catch {}
+  return map;
+}
+
+async function executeSmartSpotOrder({ apiKey, apiSecret, market, side, inrAmount, quantityOverride }) {
+  const [metaMap, tickerRes, acct] = await Promise.all([
+    getCoinDcxMarketMetaMap(),
+    fetch('https://api.coindcx.com/exchange/ticker').then((r) => r.json()),
+    fetchCoinDcxBalances(apiKey, apiSecret),
+  ]);
+
+  const byMarket = new Map();
+  if (Array.isArray(tickerRes)) {
+    for (const t of tickerRes) byMarket.set(String(t.market).toUpperCase(), t);
+  }
+
+  let cleanSymbol = String(market || 'BTCINR').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const normSide = String(side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
+
+  // Auto-route USDT symbol -> INR Spot pair when wallet holds INR instead of USDT
+  if (cleanSymbol.endsWith('USDT') && (acct.spotUsdt || 0) < 5 && (acct.spotInr || 0) >= 102) {
+    const candidateInr = cleanSymbol.replace(/USDT$/, 'INR');
+    if (byMarket.has(candidateInr)) {
+      cleanSymbol = candidateInr;
+    }
+  }
+
+  const baseCoin = cleanSymbol.replace(/(INR|USDT)$/, '') || 'BTC';
+  const quoteCoin = cleanSymbol.endsWith('USDT') ? 'USDT' : 'INR';
+  const tick = byMarket.get(cleanSymbol);
+  const lastPrice = Number(tick?.last_price || 0);
+  const askPrice = Number(tick?.ask || lastPrice);
+  const bidPrice = Number(tick?.bid || lastPrice);
+  if (!lastPrice || lastPrice <= 0) {
+    throw new Error(`Live price unavailable for ${cleanSymbol}`);
+  }
+
+  const meta =
+    metaMap.get(cleanSymbol) ||
+    PRECISION_FALLBACK[cleanSymbol] || { prec: 4, minNotional: quoteCoin === 'INR' ? 100 : 5 };
+  const prec = Math.max(0, Math.min(8, Number(meta.prec ?? 4)));
+  const factor = Math.pow(10, prec);
+  const usdtInr = acct.usdtInr || 87.5;
+
+  let finalQty = 0;
+  if (normSide === 'buy') {
+    const availQuote = quoteCoin === 'INR' ? Number(acct.spotInr || 0) : Number(acct.spotUsdt || 0);
+    const minReq = Number(meta.minNotional || (quoteCoin === 'INR' ? 100 : 5));
+    if (availQuote < minReq) {
+      throw new Error(
+        `Spot ${quoteCoin} balance (${quoteCoin === 'INR' ? '₹' : '$'}${availQuote.toFixed(2)}) minimum order (${quoteCoin === 'INR' ? '₹' : '$'}${minReq}) se kam hai`
+      );
+    }
+    const desiredQuote =
+      inrAmount && Number(inrAmount) > 0
+        ? quoteCoin === 'INR'
+          ? Number(inrAmount)
+          : Number(inrAmount) / usdtInr
+        : Number(quantityOverride || 0) * askPrice;
+
+    const clampedQuote = Math.min(availQuote * 0.99, Math.max(minReq * 1.05, desiredQuote || minReq * 1.15));
+    const refPx = askPrice > 0 ? askPrice : lastPrice;
+    finalQty = Math.ceil((clampedQuote / refPx) * factor) / factor;
+    if (finalQty * refPx > availQuote * 0.996) {
+      finalQty = Math.floor(((availQuote * 0.994) / refPx) * factor) / factor;
+    }
+  } else {
+    const heldRow = (acct.holdings || []).find((h) => h.wallet === 'SPOT' && h.currency === baseCoin);
+    const availCoin = Number(heldRow?.balance || 0);
+    if (availCoin <= 0) {
+      throw new Error(`Spot wallet me abhi ${baseCoin} coin nahi hai (pehle BUY order lagayein)`);
+    }
+    const reqQty =
+      quantityOverride && Number(quantityOverride) > 0 && Number(quantityOverride) <= availCoin
+        ? Number(quantityOverride)
+        : inrAmount && Number(inrAmount) > 0
+        ? Math.min(availCoin, Number(inrAmount) / (quoteCoin === 'INR' ? bidPrice : bidPrice * usdtInr))
+        : availCoin;
+    const useFull = (availCoin - reqQty) * (quoteCoin === 'INR' ? bidPrice : bidPrice * usdtInr) < 105;
+    finalQty = Math.floor((useFull ? availCoin : reqQty) * factor) / factor;
+  }
+
+  finalQty = Number(finalQty.toFixed(prec));
+  if (!finalQty || finalQty <= 0) {
+    throw new Error(`${cleanSymbol} order quantity minimum step se chhoti hai — ₹150+ amount rakhein`);
+  }
+
+  const spotPayload = {
+    side: normSide,
+    order_type: 'market_order',
+    market: cleanSymbol,
+    total_quantity: finalQty,
+    timestamp: Math.floor(Date.now()),
+  };
+  const rawBody = JSON.stringify(spotPayload);
+  const sig = await hmacSha256Hex(apiSecret, rawBody);
+  const r = await fetch('https://api.coindcx.com/exchange/v1/orders/create', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'X-AUTH-APIKEY': apiKey, 'X-AUTH-SIGNATURE': sig },
+    body: rawBody,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    throw new Error(data?.message || JSON.stringify(data) || `CoinDCX rejected ${cleanSymbol}`);
+  }
+  const executedPrice = normSide === 'buy' ? askPrice : bidPrice;
+  const approxInr = quoteCoin === 'INR' ? finalQty * executedPrice : finalQty * executedPrice * usdtInr;
+  if (normSide === 'buy') {
+    autoTradeState.entries[cleanSymbol] = { entryPrice: executedPrice, ts: Date.now(), qty: finalQty };
+  } else {
+    delete autoTradeState.entries[cleanSymbol];
+  }
+  return {
+    ok: true,
+    live: true,
+    wallet: 'SPOT',
+    market: cleanSymbol,
+    side: normSide.toUpperCase(),
+    quantity: finalQty,
+    price: executedPrice,
+    approxInr: Number(approxInr.toFixed(2)),
+    orderId: data?.orders?.[0]?.id || data?.id || 'LIVE_FILLED',
+    response: data,
+  };
+}
+
+async function runSmartAutoTradeCycle(env, opts = {}) {
+  const k = String(opts.apiKey || env.COINDCX_API_KEY || '').trim();
+  const s = String(opts.apiSecret || env.COINDCX_API_SECRET || '').trim();
+  if (!k || !s) {
+    return { ok: false, traded: false, error: 'CoinDCX API keys missing' };
+  }
+
+  const tradeInr = Math.max(115, Number(opts.tradeInr || autoTradeState.tradeInr || 150));
+  const forceEntry = Boolean(opts.forceEntry);
+  if (opts.entryHints && typeof opts.entryHints === 'object') {
+    autoTradeState.entries = { ...opts.entryHints, ...autoTradeState.entries };
+  }
+  autoTradeState.lastCheckAt = Date.now();
+
+  const [tickerRes, acct] = await Promise.all([
+    fetch('https://api.coindcx.com/exchange/ticker').then((r) => r.json()),
+    fetchCoinDcxBalances(k, s),
+  ]);
+  const byMarket = new Map();
+  if (Array.isArray(tickerRes)) {
+    for (const t of tickerRes) byMarket.set(String(t.market).toUpperCase(), t);
+  }
+
+  const LIQUID_INR = ['BTCINR', 'ETHINR', 'SOLINR', 'XRPINR', 'DOGEINR'];
+
+  // 1) Manage held liquid coins FIRST: Take-Profit >= +0.95% OR Stop-Loss <= -0.85%
+  const heldLiquid = [];
+  for (const sym of LIQUID_INR) {
+    const coin = sym.replace(/INR$/, '');
+    const row = (acct.holdings || []).find((h) => h.wallet === 'SPOT' && h.currency === coin);
+    const tick = byMarket.get(sym);
+    if (row && Number(row.valueInr || 0) >= 105 && tick) {
+      heldLiquid.push({ sym, coin, row, tick });
+      const bid = Number(tick.bid || tick.last_price || 0);
+      const entryInfo = autoTradeState.entries[sym];
+      const pnlPct = entryInfo?.entryPrice ? ((bid - entryInfo.entryPrice) / entryInfo.entryPrice) * 100 : null;
+      const high = Number(tick.high || bid);
+      const low = Number(tick.low || bid);
+      const posInRange = high > low ? (bid - low) / (high - low) : 0.5;
+
+      const hitTp = pnlPct !== null ? pnlPct >= 0.95 : posInRange >= 0.92;
+      const hitSl = pnlPct !== null && pnlPct <= -0.85;
+      if (hitTp || hitSl) {
+        const res = await executeSmartSpotOrder({
+          apiKey: k,
+          apiSecret: s,
+          market: sym,
+          side: 'sell',
+          quantityOverride: row.balance,
+        });
+        const tag = hitTp
+          ? `🎯 Take-Profit Booked (${pnlPct !== null ? '+' + pnlPct.toFixed(2) + '%' : '24h Peak'})`
+          : `🛡️ Smart Stop-Loss Protected (${pnlPct.toFixed(2)}%)`;
+        autoTradeState.lastTradeAt = Date.now();
+        autoTradeState.lastAction = `${tag} on ${sym} (₹${res.approxInr})`;
+        if (env.TELEGRAM_BOT_TOKEN && autoTradeState.lastOwnerChatId) {
+          send(
+            env.TELEGRAM_BOT_TOKEN,
+            autoTradeState.lastOwnerChatId,
+            `💹 <b>APEX Auto-Trader LIVE SELL</b>\n• Pair: <b>${sym}</b>\n• Qty: <b>${res.quantity}</b> @ ₹${res.price.toLocaleString('en-IN')}\n• Value: <b>₹${res.approxInr}</b>\n• Reason: ${esc(tag)}`
+          ).catch(() => {});
+        }
+        return { ok: true, traded: true, reason: tag, order: res, entries: autoTradeState.entries };
+      }
+    }
+  }
+
+  // 2) Smart Entry Scan when Spot INR available
+  const spotInr = Number(acct.spotInr || 0);
+  if (spotInr < 106) {
+    const msg =
+      heldLiquid.length > 0
+        ? `Monitoring ${heldLiquid.map((x) => x.sym).join(', ')} for +0.95% Take-Profit (Spot INR ₹${spotInr.toFixed(2)})`
+        : `Spot INR ₹${spotInr.toFixed(2)} minimum ₹106 order se kam hai`;
+    autoTradeState.lastAction = msg;
+    return { ok: true, traded: false, reason: msg, entries: autoTradeState.entries };
+  }
+
+  if (!forceEntry && heldLiquid.length >= 2) {
+    const msg = `2 live positions active (${heldLiquid.map((x) => x.sym).join(', ')}) — waiting for Take-Profit before next buy`;
+    autoTradeState.lastAction = msg;
+    return { ok: true, traded: false, reason: msg, entries: autoTradeState.entries };
+  }
+
+  const cooldownMs = 8 * 60 * 1000;
+  if (!forceEntry && autoTradeState.lastTradeAt && Date.now() - autoTradeState.lastTradeAt < cooldownMs) {
+    const minsLeft = Math.ceil((cooldownMs - (Date.now() - autoTradeState.lastTradeAt)) / 60000);
+    const msg = `Smart cooldown (${minsLeft}m left) · Watching live ticks & TP/SL`;
+    return { ok: true, traded: false, reason: msg, entries: autoTradeState.entries };
+  }
+
+  let best = null;
+  for (const sym of LIQUID_INR) {
+    if (!forceEntry && heldLiquid.some((h) => h.sym === sym)) continue;
+    const t = byMarket.get(sym);
+    if (!t) continue;
+    const last = Number(t.last_price || 0);
+    const bid = Number(t.bid || last);
+    const ask = Number(t.ask || last);
+    const high = Number(t.high || last);
+    const low = Number(t.low || last);
+    const chg = Number(t.change_24_hour || 0);
+    if (last <= 0 || ask <= 0) continue;
+    const spreadPct = ((ask - bid) / last) * 100;
+    if (!forceEntry && spreadPct > 0.45) continue;
+    const posInRange = high > low ? (last - low) / (high - low) : 0.5;
+    let score = (0.5 - Math.min(0.5, spreadPct)) * 40;
+    let signalReason = '';
+    if (posInRange <= 0.38) {
+      score += (0.42 - posInRange) * 120;
+      signalReason = `Smart Dip Entry (${Math.round(posInRange * 100)}% of 24h range, spread ${spreadPct.toFixed(2)}%)`;
+    } else if (chg >= 0.4 && posInRange <= 0.84) {
+      score += chg * 12;
+      signalReason = `Bullish Momentum (+${chg.toFixed(2)}% 24h, spread ${spreadPct.toFixed(2)}%)`;
+    } else {
+      score += (0.7 - Math.abs(posInRange - 0.35)) * 25;
+      signalReason = `Best Liquid Pair (${sym}, ${chg >= 0 ? '+' : ''}${chg.toFixed(2)}% 24h, spread ${spreadPct.toFixed(2)}%)`;
+    }
+    if (!best || score > best.score) {
+      best = { sym, score, signalReason, posInRange, chg, spreadPct };
+    }
+  }
+
+  if (!best) {
+    return { ok: true, traded: false, reason: 'Waiting for low-spread CoinDCX setup', entries: autoTradeState.entries };
+  }
+
+  if (!forceEntry && best.score < 14) {
+    const msg = `Scanning ${best.sym} (score ${best.score.toFixed(1)}) — waiting for dip/breakout`;
+    autoTradeState.lastAction = msg;
+    return { ok: true, traded: false, reason: msg, entries: autoTradeState.entries };
+  }
+
+  const order = await executeSmartSpotOrder({
+    apiKey: k,
+    apiSecret: s,
+    market: best.sym,
+    side: 'buy',
+    inrAmount: Math.min(tradeInr, spotInr * 0.99),
+  });
+  autoTradeState.lastTradeAt = Date.now();
+  autoTradeState.lastAction = `✅ LIVE BUY ${order.market} ₹${order.approxInr} — ${best.signalReason}`;
+  if (env.TELEGRAM_BOT_TOKEN && autoTradeState.lastOwnerChatId) {
+    send(
+      env.TELEGRAM_BOT_TOKEN,
+      autoTradeState.lastOwnerChatId,
+      `🚀 <b>APEX Auto-Trader LIVE BUY</b>\n• Pair: <b>${order.market}</b>\n• Qty: <b>${order.quantity}</b> @ ₹${order.price.toLocaleString('en-IN')}\n• Invested: <b>₹${order.approxInr}</b>\n• Signal: ${esc(best.signalReason)}`
+    ).catch(() => {});
+  }
+  return {
+    ok: true,
+    traded: true,
+    reason: best.signalReason,
+    order,
+    entries: autoTradeState.entries,
+  };
+}
 
 async function handleUpdate(update, env) {
   const token = env.TELEGRAM_BOT_TOKEN;
@@ -535,9 +868,46 @@ async function handleUpdate(update, env) {
   if (allowed.length && !allowed.includes(String(chatId))) {
     return send(token, chatId, `🔒 Private bot.\nTumhara chat id: <code>${chatId}</code>`);
   }
+  autoTradeState.lastOwnerChatId = String(chatId);
 
   const raw = (msg.text || '').trim();
   if (!raw) return;
+
+  if (raw.toLowerCase().startsWith('/autotrade')) {
+    const sub = raw.split(/\s+/)[1]?.toLowerCase() || 'status';
+    if (sub === 'on') {
+      autoTradeState.enabled = true;
+      const res = await runSmartAutoTradeCycle(env, { forceEntry: true }).catch((e) => ({ ok: false, error: e.message }));
+      if (res.traded && res.order) {
+        return send(
+          token,
+          chatId,
+          `🤖 <b>24×7 Smart Auto-Trader ON!</b>\n✅ First Live Order Executed:\n• <b>${res.order.side} ${res.order.market}</b>: ${res.order.quantity} (₹${res.order.approxInr})\n• Reason: ${esc(res.reason)}`
+        );
+      }
+      return send(token, chatId, `🤖 <b>24×7 Smart Auto-Trader ON!</b>\nStatus: ${esc(res.reason || res.error || 'Monitoring live market')}`);
+    }
+    if (sub === 'off') {
+      autoTradeState.enabled = false;
+      return send(token, chatId, '⏹ <b>Auto-Trader OFF.</b> Koi automatic order ab nahi jayega.');
+    }
+    if (sub === 'now') {
+      const res = await runSmartAutoTradeCycle(env, { forceEntry: true }).catch((e) => ({ ok: false, error: e.message }));
+      if (res.traded && res.order) {
+        return send(
+          token,
+          chatId,
+          `⚡ <b>Smart Trade Executed!</b>\n• <b>${res.order.side} ${res.order.market}</b>: ${res.order.quantity} @ ₹${res.order.price.toLocaleString('en-IN')} (₹${res.order.approxInr})\n• Signal: ${esc(res.reason)}`
+        );
+      }
+      return send(token, chatId, `ℹ️ Smart Check: ${esc(res.reason || res.error || 'No trade')}`);
+    }
+    return send(
+      token,
+      chatId,
+      `🤖 <b>Auto-Trader Status:</b> ${autoTradeState.enabled ? '🟢 ON' : '🔴 OFF'}\n• Per Trade: ₹${autoTradeState.tradeInr}\n• Last: ${esc(autoTradeState.lastAction)}`
+    );
+  }
 
   if (raw === '/start' || raw === '/help') return send(token, chatId, HELP);
   if (raw === '/id' || raw === '/whoami') {
@@ -1130,32 +1500,66 @@ export default {
           return jsonRes({ ok: true, live: true, wallet: 'FUTURES', status: 'EXECUTED_LIVE_FUTURES', response: data });
         }
 
-        // Spot Exchange Order
-        const spotPayload = {
-          side,
-          order_type: body?.order_type || 'market_order',
+        // Precision-Exact Real Spot Execution Engine (auto-matches CoinDCX step size + INR/USDT wallet!)
+        const executed = await executeSmartSpotOrder({
+          apiKey: k,
+          apiSecret: s,
           market: cleanSymbol,
-          ...(body?.order_type === 'limit_order' && price > 0 ? { price_per_unit: price } : {}),
-          total_quantity: quantity,
-          timestamp: Math.floor(Date.now()),
-        };
-        const rawBody = JSON.stringify(spotPayload);
-        const sig = await hmacSha256Hex(s, rawBody);
-        const r = await fetch('https://api.coindcx.com/exchange/v1/orders/create', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', 'X-AUTH-APIKEY': k, 'X-AUTH-SIGNATURE': sig },
-          body: rawBody,
+          side,
+          inrAmount: body?.inrAmount ? Number(body.inrAmount) : undefined,
+          quantityOverride: quantity,
         });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          return jsonRes(
-            { ok: false, live: true, wallet: 'SPOT', error: data?.message || 'CoinDCX Spot rejection', details: data },
-            r.status
-          );
-        }
-        return jsonRes({ ok: true, live: true, wallet: 'SPOT', status: 'EXECUTED_LIVE_SPOT', response: data });
+        return jsonRes({
+          ok: true,
+          live: true,
+          wallet: 'SPOT',
+          status: 'EXECUTED_LIVE_SPOT',
+          market: executed.market,
+          quantity: executed.quantity,
+          price: executed.price,
+          approxInr: executed.approxInr,
+          orderId: executed.orderId,
+          response: executed.response,
+        });
       } catch (e) {
-        return jsonRes({ ok: false, live: true, error: e.message }, 502);
+        return jsonRes({ ok: false, live: true, error: e.message }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/coindcx/auto-state') {
+      if (request.method === 'POST') {
+        const body = await request.json().catch(() => ({}));
+        if (typeof body.enabled === 'boolean') autoTradeState.enabled = body.enabled;
+        if (body.tradeInr) autoTradeState.tradeInr = Math.max(115, Number(body.tradeInr) || 150);
+        if (body.entries && typeof body.entries === 'object') {
+          autoTradeState.entries = { ...autoTradeState.entries, ...body.entries };
+        }
+        autoTradeState.lastAction = autoTradeState.enabled
+          ? `🤖 24×7 Smart Auto-Trader ACTIVE (₹${autoTradeState.tradeInr}/trade)`
+          : '⏹ Auto-Trader Paused (Safe Standby)';
+        if (env.APEX_KV) {
+          await env.APEX_KV.put('autotrade_state', JSON.stringify(autoTradeState)).catch(() => {});
+        }
+      }
+      return jsonRes({ ok: true, state: autoTradeState });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/coindcx/smart-tick') {
+      const body = await request.json().catch(() => ({}));
+      try {
+        const out = await runSmartAutoTradeCycle(env, {
+          apiKey: body?.apiKey,
+          apiSecret: body?.apiSecret,
+          tradeInr: body?.tradeInr,
+          forceEntry: Boolean(body?.forceEntry),
+          entryHints: body?.entries,
+        });
+        if (env.APEX_KV) {
+          await env.APEX_KV.put('autotrade_state', JSON.stringify(autoTradeState)).catch(() => {});
+        }
+        return jsonRes(out);
+      } catch (e) {
+        return jsonRes({ ok: false, traded: false, error: e.message }, 400);
       }
     }
 
@@ -1289,5 +1693,25 @@ export default {
     }
 
     return new Response('APEX Humanoid Hub — open /', { status: 200 });
+  },
+
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(
+      (async () => {
+        if (env.APEX_KV) {
+          try {
+            const saved = await env.APEX_KV.get('autotrade_state', 'json');
+            if (saved && typeof saved === 'object') {
+              autoTradeState = { ...autoTradeState, ...saved };
+            }
+          } catch {}
+        }
+        if (!autoTradeState.enabled) return;
+        await runSmartAutoTradeCycle(env, { forceEntry: false }).catch(() => {});
+        if (env.APEX_KV) {
+          await env.APEX_KV.put('autotrade_state', JSON.stringify(autoTradeState)).catch(() => {});
+        }
+      })()
+    );
   },
 };

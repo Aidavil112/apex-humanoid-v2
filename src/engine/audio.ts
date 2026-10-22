@@ -10,8 +10,10 @@ class AudioEngine {
   public sfxOn: boolean = true;
   public powered: boolean = true;
   public analyser: AnalyserNode | null = null;
+  public micAnalyser: AnalyserNode | null = null;
   public audioEl: HTMLAudioElement | null = null;
   public rmsBuf: Float32Array = new Float32Array(512);
+  public micRmsBuf: Float32Array = new Float32Array(512);
 
   // Mic stream source node for user voice visualization
   private micSource: MediaStreamAudioSourceNode | null = null;
@@ -69,8 +71,14 @@ class AudioEngine {
       if (this.micSource) {
         this.micSource.disconnect();
       }
+      if (!this.micAnalyser) {
+        this.micAnalyser = this.actx.createAnalyser();
+        this.micAnalyser.fftSize = 512;
+        this.micAnalyser.smoothingTimeConstant = 0.35;
+      }
       const micSource = this.actx.createMediaStreamSource(stream);
-      // Connect to analyser only (NOT to destination) to avoid feedback howl!
+      // Connect to dedicated micAnalyser (pure mic level) + visual analyser (NEVER destination)
+      micSource.connect(this.micAnalyser);
       micSource.connect(this.analyser);
       this.micSource = micSource;
     } catch (e) {
@@ -416,6 +424,21 @@ class AudioEngine {
     let s = 0;
     for (let i = 0; i < this.rmsBuf.length; i++) s += this.rmsBuf[i] * this.rmsBuf[i];
     return Math.min(1, Math.sqrt(s / this.rmsBuf.length) * 9);
+  }
+
+  /** Pure isolated microphone level (0..1) unaffected by speaker/ambient buses. */
+  public micRms(): number {
+    if (!this.powered || !this.micAnalyser || !this.micSource) return 0;
+    this.micAnalyser.getFloatTimeDomainData(this.micRmsBuf as any);
+    let s = 0;
+    let peak = 0;
+    for (let i = 0; i < this.micRmsBuf.length; i++) {
+      const v = Math.abs(this.micRmsBuf[i]);
+      s += v * v;
+      if (v > peak) peak = v;
+    }
+    const rms = Math.sqrt(s / this.micRmsBuf.length);
+    return Math.min(1, Math.max(rms * 18, peak * 6));
   }
 }
 

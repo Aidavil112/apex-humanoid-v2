@@ -94,6 +94,8 @@ interface TradingBotModalProps {
   onSelectPairIndex: (index: number) => void;
   autoTrading: boolean;
   onToggleAutoTrading: () => void;
+  smartStatus?: string;
+  onSmartTradeNow?: () => void;
   balance: number;
   liveAccount?: LiveAccountSummary;
   onSyncAccount?: (k?: string, s?: string) => Promise<any>;
@@ -123,6 +125,8 @@ export const TradingBotModal: React.FC<TradingBotModalProps> = ({
   onSelectPairIndex,
   autoTrading,
   onToggleAutoTrading,
+  smartStatus,
+  onSmartTradeNow,
   balance,
   liveAccount,
   onSyncAccount,
@@ -398,6 +402,49 @@ export const TradingBotModal: React.FC<TradingBotModalProps> = ({
                 </div>
               </div>
             )}
+          </div>
+
+          {/* BIG 1-TAP 24x7 SMART AUTO-TRADER + INSTANT LIVE EXECUTION BANNER */}
+          <div className="p-3.5 rounded-xl bg-gradient-to-r from-[rgba(0,245,160,0.12)] via-[rgba(6,24,38,0.95)] to-[rgba(79,210,255,0.12)] border border-[#00f5a0] space-y-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              <div>
+                <div className="text-xs sm:text-sm font-extrabold text-white flex items-center gap-2">
+                  <span className={`w-2.5 h-2.5 rounded-full ${autoTrading ? 'bg-[#00f5a0] animate-ping' : 'bg-[#ffd13b]'}`} />
+                  <span>
+                    {autoTrading
+                      ? `🤖 24×7 SMART AUTO-TRADING ACTIVE (₹${orderInrAmount}/trade)`
+                      : '🤖 SMART AUTO-TRADER READY (1-Tap Start)'}
+                  </span>
+                </div>
+                <div className="text-[10.5px] text-[#a7f3d0] mt-0.5">
+                  {smartStatus || 'Auto Dip-Buy + +0.95% Take-Profit + -0.85% Stop-Loss (100% Real CoinDCX Spot INR)'}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={onToggleAutoTrading}
+                  disabled={orderBusy}
+                  className={`px-3.5 py-2 rounded-xl text-xs font-extrabold uppercase tracking-wider cursor-pointer border transition-all ${
+                    autoTrading
+                      ? 'bg-[#ff3b5c] text-white border-[#ff6b84] shadow-[0_0_16px_rgba(255,59,92,0.5)]'
+                      : 'bg-[#00f5a0] text-[#041a12] border-[#00f5a0] shadow-[0_0_18px_rgba(0,245,160,0.6)]'
+                  }`}
+                >
+                  {autoTrading ? '⏹ STOP AUTO-TRADE' : '🚀 START AUTO-TRADE'}
+                </button>
+
+                {onSmartTradeNow && (
+                  <button
+                    onClick={onSmartTradeNow}
+                    disabled={orderBusy}
+                    className="px-3.5 py-2 rounded-xl bg-[#ffd13b] hover:brightness-105 disabled:opacity-50 text-[#121604] border border-[#ffe17d] text-xs font-extrabold uppercase tracking-wider cursor-pointer"
+                  >
+                    {orderBusy ? 'Executing…' : `⚡ ABHI SMART TRADE (₹${orderInrAmount})`}
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* 4 Live Real Account Metric Cards */}

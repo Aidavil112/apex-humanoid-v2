@@ -80,6 +80,7 @@ export const App: React.FC = () => {
   const [liveVoiceStage, setLiveVoiceStage] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [liveUserText, setLiveUserText] = useState<string>('');
   const [liveBotText, setLiveBotText] = useState<string>('');
+  const [micLevel, setMicLevel] = useState<number>(0);
   const [langMode, setLangMode] = useState<'en-IN' | 'hi-IN'>('hi-IN');
   const liveSpeakingRef = useRef<boolean>(false);
   const mediaRecRef = useRef<MediaRecorder | null>(null);
@@ -366,6 +367,8 @@ export const App: React.FC = () => {
     onTriggerSentimentTrade: handleTriggerSentimentTrade,
     onTradeBurst: handleTradeBurst,
   });
+  const autoTraderRef = useRef(autoTrader);
+  autoTraderRef.current = autoTrader;
 
   const handleUtterance = useCallback(
     async (text: string) => {
@@ -434,43 +437,76 @@ export const App: React.FC = () => {
         }
       }
 
-      // Quick offline/instant responses
-      for (const [re, out] of QUICK_RESPONSES) {
-        if (re.test(text.trim())) {
-          const reply = typeof out === 'function' ? out() : out;
-          toast(`“${reply}”`, 3500);
-          speak(reply, () => {
-            busyRef.current = false;
-          });
-          return;
-        }
+      // Live Voice Trading & Real CoinDCX Portfolio Commands!
+      const lowTxt = text.toLowerCase();
+      if (/(balance|wallet|portfolio|kitna paisa|kitne paise|mera fund)/i.test(lowTxt)) {
+        setLiveUserText(text);
+        setLiveVoiceStage('thinking');
+        const synced = await autoTraderRef.current.syncLiveAccount();
+        const total = Number(synced?.totalInr ?? autoTraderRef.current.balance ?? 0).toFixed(2);
+        const spot = Number(synced?.spotInr ?? autoTraderRef.current.liveAccount.spotInr ?? 0).toFixed(2);
+        const reply = `Aapke real CoinDCX wallet me abhi total ${total} rupay hain, jisme Spot INR ${spot} rupay hai.`;
+        toast(`💰 ${reply}`, 5000);
+        speak(reply, () => {
+          busyRef.current = false;
+        });
+        return;
+      }
+      if (/(auto\s*trad|trading\s*(on|chalu|start)|start\s*auto)/i.test(lowTxt) && !/(off|band|stop|rok)/i.test(lowTxt)) {
+        setLiveUserText(text);
+        setLiveVoiceStage('thinking');
+        autoTraderRef.current.setAutoTrading(true);
+        const reply = 'Real CoinDCX Smart Auto Trading chalu kar di hai! Abhi best coin scan karke live order ja raha hai.';
+        toast(`🤖 ${reply}`, 5000);
+        speak(reply, () => {
+          busyRef.current = false;
+        });
+        return;
+      }
+      if (/(auto\s*trad.*(off|band|stop)|trading\s*(off|band|stop|rok)|stop\s*auto)/i.test(lowTxt)) {
+        setLiveUserText(text);
+        autoTraderRef.current.setAutoTrading(false);
+        const reply = 'Auto trading band kar di hai. Aapka wallet safe manual mode me hai.';
+        toast(`⏹ ${reply}`, 4500);
+        speak(reply, () => {
+          busyRef.current = false;
+        });
+        return;
+      }
+      if (/(smart\s*trade|abhi\s*trade|coin\s*buy|bitcoin\s*buy|btc\s*buy)/i.test(lowTxt)) {
+        setLiveUserText(text);
+        setLiveVoiceStage('thinking');
+        const res = await autoTraderRef.current.runSmartTradeNow(true);
+        const reply =
+          res?.traded && res?.order
+            ? `Live order complete! ${res.order.market} me ${res.order.approxInr} rupay ka ${res.order.side} execute ho gaya.`
+            : `Market check kiya: ${res?.reason || res?.error || 'abhi wait kar rahe hain'}`;
+        toast(`⚡ ${reply}`, 5000);
+        speak(reply, () => {
+          busyRef.current = false;
+        });
+        return;
       }
 
-      // Ask brain from server (with automatic failover to Cloudflare Workers AI endpoint!)
+      // Ask real live AI brain directly (instant Hinglish conversational mode!)
       try {
         setLiveUserText(text);
         setLiveVoiceStage('thinking');
         const t0 = performance.now();
+        const acctNow = autoTraderRef.current.liveAccount;
         const chatBody = JSON.stringify({
-          text,
+          text: `${text}\n[Context: User real CoinDCX balance ₹${acctNow.totalInr.toFixed(2)}, Spot INR ₹${acctNow.spotInr.toFixed(2)}, Auto-Trade: ${autoTraderRef.current.autoTrading ? 'ON' : 'OFF'}]`,
           voiceMode: true,
           history: chatMemRef.current,
           model: deepMode ? 'gemini-3.8-flash' : undefined,
         });
-        let r = await fetch('/chat', {
+        const r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: chatBody,
-        }).catch(() => null);
-        if (!r || !r.ok) {
-          r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/chat', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: chatBody,
-          });
-        }
+        });
         const j = await r.json();
-        const reply = j.text || 'I hear you, standing by.';
+        const reply = j.text || 'Main sun raha hoon, boliye!';
         const ms = Math.round(performance.now() - t0);
         toast(`“${reply.slice(0, 90)}” · ${ms}ms`, 5000);
         chatMemRef.current.push({ role: 'user', text });
@@ -481,7 +517,7 @@ export const App: React.FC = () => {
           busyRef.current = false;
         });
       } catch (err) {
-        const fallback = 'Systems active, brain offline.';
+        const fallback = 'Network thoda slow hai, ek baar fir boliye.';
         toast(fallback, 3000);
         speak(fallback, () => {
           busyRef.current = false;
@@ -514,7 +550,8 @@ export const App: React.FC = () => {
     setIsListening(true);
     setLiveVoiceStage('listening');
     setMood('listening');
-    toast('🎙️ Live Voice ON — boliye, main sun raha hoon!');
+    toast('📞 Live Call Connected — boliye, main sun raha hoon!');
+    speak('Haan boliye, main live sun raha hoon!');
 
     let nativeFiredRecently = false;
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -644,6 +681,8 @@ export const App: React.FC = () => {
       clearInterval(vadTimerRef.current);
       vadTimerRef.current = setInterval(() => {
         if (!micStreamRef.current) return;
+        const pureLvl = audio.micRms();
+        setMicLevel(pureLvl);
         if (liveSpeakingRef.current || busyRef.current) {
           speakingDetected = false;
           silenceTicks = 0;
@@ -651,15 +690,14 @@ export const App: React.FC = () => {
           chunks = [];
           return;
         }
-        const rms = audio.analyserRms();
-        if (rms > 0.14) {
+        if (pureLvl > 0.028) {
           speakingDetected = true;
           totalSpeechTicks += 1;
           silenceTicks = 0;
         } else if (speakingDetected) {
           silenceTicks += 1;
-          // ~900ms pause after real speech (or max 9s utterance) -> send to Whisper automatically!
-          if ((silenceTicks >= 9 && totalSpeechTicks >= 3) || totalSpeechTicks >= 90) {
+          // ~700ms pause after real speech (or max 8.5s utterance) -> send straight to Whisper!
+          if ((silenceTicks >= 7 && totalSpeechTicks >= 2) || totalSpeechTicks >= 85) {
             if (mediaRecRef.current && mediaRecRef.current.state === 'recording') {
               try {
                 mediaRecRef.current.stop();
@@ -1237,12 +1275,20 @@ export const App: React.FC = () => {
             )}
           </div>
 
+          {/* Live Real-Time Mic Audio Meter Bar so user visibly sees their voice level! */}
+          <div className="w-full h-1.5 rounded-full bg-[#0a1d2c] overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-75 bg-gradient-to-r from-[#00f5a0] to-[#4fd2ff]"
+              style={{ width: `${Math.max(6, Math.min(100, Math.round(micLevel * 140)))}%` }}
+            />
+          </div>
+
           {liveUserText && (
             <div className="text-[11px] text-[#9ee8ff] truncate">
               🎤 Aap: <span className="text-white">"{liveUserText}"</span>
             </div>
           )}
-          {liveBotText && liveVoiceStage === 'speaking' && (
+          {liveBotText && (
             <div className="text-[11px] text-[#00f5a0] line-clamp-2 leading-snug">
               🤖 APEX: {liveBotText}
             </div>
@@ -1256,6 +1302,7 @@ export const App: React.FC = () => {
           poweredOn={poweredOn}
           menuOpen={menuOpen}
           isListening={isListening}
+          autoTrading={autoTrader.autoTrading}
           onTogglePower={togglePower}
           onToggleMenu={() => {
             audio.ensureCtx();
@@ -1263,6 +1310,11 @@ export const App: React.FC = () => {
             setMenuOpen((prev) => !prev);
           }}
           onToggleMic={toggleMic}
+          onOpenTrading={() => {
+            audio.ensureCtx();
+            audio.tick(0.6);
+            setTradingBotOpen(true);
+          }}
           onTestVoice={testVoice}
         />
       )}
@@ -1375,6 +1427,8 @@ export const App: React.FC = () => {
             onSelectPairIndex={autoTrader.setSelectedPairIndex}
             autoTrading={autoTrader.autoTrading}
             onToggleAutoTrading={() => autoTrader.setAutoTrading((v) => !v)}
+            smartStatus={autoTrader.smartStatus}
+            onSmartTradeNow={() => autoTrader.runSmartTradeNow(true)}
             balance={autoTrader.balance}
             liveAccount={autoTrader.liveAccount}
             onSyncAccount={autoTrader.syncLiveAccount}

@@ -5,5 +5,8 @@
   "keep_vars": true,
   "ai": {
     "binding": "AI"
+  },
+  "triggers": {
+    "crons": ["*/10 * * * *"]
   }
 }
