@@ -93,7 +93,7 @@ export const Dock: React.FC<DockProps> = ({
           aria-label="Open JARVIS OS Mode"
           className="cursor-pointer font-mono text-[10.5px] tracking-[0.08em] uppercase rounded-xl px-2.5 py-2 transition-all duration-200 border whitespace-nowrap text-white bg-[#0d121a] border-[rgba(255,255,255,0.45)] hover:border-white font-bold"
         >
-          ◉ JARVIS
+          ◉ APEX OS
         </button>
       )}
 

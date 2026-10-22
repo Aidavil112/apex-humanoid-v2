@@ -14,6 +14,7 @@ import { AudioWaveform } from './components/AudioWaveform';
 import { TradingBotModal } from './components/TradingBotModal';
 import { AgentCompanyModal } from './components/AgentCompanyModal';
 import { JarvisWorkspace, JarvisTaskItem, JarvisMemoryItem } from './components/JarvisWorkspace';
+import { executePhoneAction, parseLocalPhoneCommand } from './engine/phoneBridge';
 import { useAutoTrader } from './hooks/useAutoTrader';
 import { analyzeSentiment } from './engine/sentiment';
 
@@ -515,6 +516,20 @@ export const App: React.FC = () => {
         }
       }
 
+      // Instant Android Phone App / Call / Alarm / Timer Launcher (Voice or Text!)
+      const phoneCmd = parseLocalPhoneCommand(text);
+      if (phoneCmd) {
+        setLiveUserText(text);
+        toast(`📱 ${phoneCmd.reply}`, 3500);
+        speak(phoneCmd.reply, () => {
+          busyRef.current = false;
+        });
+        setTimeout(() => {
+          executePhoneAction(phoneCmd.action, phoneCmd.payload);
+        }, 350);
+        return;
+      }
+
       // JARVIS Personal OS Voice/Text Commands (Tasks, Memory, Open Modules — Trading stays strictly inside AI Trading Bot!)
       const taskCmd = text.match(/(?:task\s*add\s*karo|add\s*task|remind\s*me\s*(?:to)?|yaad\s*dilana)\s*[:\-]?\s*(.+)/i);
       if (taskCmd?.[1]) {
@@ -676,6 +691,17 @@ export const App: React.FC = () => {
           if (j.action === 'ADD_MEMORY' && j.payload) addJarvisMemory(j.payload);
           if (j.action === 'OPEN_YOUTUBE') setYoutubeOpen(true);
           if (j.action === 'OPEN_TRADING_BOT') setTradingBotOpen(true);
+          if (
+            j.action === 'LAUNCH_APP' ||
+            j.action === 'SET_ALARM' ||
+            j.action === 'SET_TIMER' ||
+            j.action === 'DIAL_PHONE' ||
+            j.action === 'OPEN_SETTINGS'
+          ) {
+            setTimeout(() => {
+              executePhoneAction(j.action, j.payload);
+            }, 450);
+          }
 
           chatMemRef.current.push({ role: 'user', text: j.heard });
           chatMemRef.current.push({ role: 'model', text: j.reply });

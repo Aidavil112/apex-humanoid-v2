@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { executePhoneAction } from '../engine/phoneBridge';
 
 export interface JarvisTaskItem {
   id: string;
@@ -62,7 +63,7 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   onOpenYouTubeStudio,
   onPowerOff,
 }) => {
-  const [activeTab, setActiveTab] = useState<'home' | 'today' | 'tasks' | 'memory' | 'skills'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'apps' | 'tasks' | 'memory' | 'skills'>('home');
   const [cmdInput, setCmdInput] = useState('');
   const [newTaskInput, setNewTaskInput] = useState('');
   const [newMemInput, setNewMemInput] = useState('');
@@ -99,9 +100,9 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
     ? '#fbbf24'
     : '#34d399';
 
-  const navItems: { id: 'home' | 'today' | 'tasks' | 'memory' | 'skills'; icon: string; label: string; badge?: number }[] = [
+  const navItems: { id: 'home' | 'apps' | 'tasks' | 'memory' | 'skills'; icon: string; label: string; badge?: number }[] = [
     { id: 'home', icon: '◉', label: 'Home' },
-    { id: 'today', icon: '📅', label: 'Today' },
+    { id: 'apps', icon: '📱', label: 'Phone Apps' },
     { id: 'tasks', icon: '☑', label: 'Tasks', badge: tasks.filter((t) => !t.done).length || undefined },
     { id: 'memory', icon: '🧠', label: 'Memory', badge: memories.length || undefined },
     { id: 'skills', icon: '⚡', label: 'Skills' },
@@ -109,14 +110,14 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 bg-[#05070a] text-[#e5e9f0] flex flex-col md:flex-row font-sans select-none overflow-hidden">
-      {/* Left Sidebar (Desktop) / Top Compact Nav (Mobile) — Izem / JARVIS Aesthetic */}
+      {/* Left Sidebar (Desktop) / Top Compact Nav (Mobile) — Izem / APEX OS Aesthetic */}
       <aside className="w-full md:w-56 bg-[#080b10] border-b md:border-b-0 md:border-r border-[rgba(255,255,255,0.08)] flex flex-col justify-between px-3 py-2.5 md:p-4 shrink-0">
         <div className="space-y-3">
           {/* Top Brand + Power + 3D Switch */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_#fff]" />
-              <span className="text-xs font-bold tracking-[0.2em] uppercase text-white">JARVIS OS</span>
+              <span className="text-xs font-bold tracking-[0.2em] uppercase text-white">APEX OS</span>
             </div>
             <div className="flex items-center gap-1.5">
               <button
@@ -270,7 +271,35 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
                 </div>
               )}
               <div className="text-sm sm:text-base text-[#f1f5f9] font-normal leading-relaxed">
-                {botText || 'Tap the orb & speak naturally — Tasks, Memory, Live News, YouTube, or anything you need.'}
+                {botText || 'Tap the orb & speak — "WhatsApp kholo", "Instagram kholo", "Subah 7 baje alarm lagao", or talk naturally!'}
+              </div>
+
+              {/* 1-Tap Quick Phone Actions Bar right on Home */}
+              <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2">
+                <button
+                  onClick={onOpenTradingBot}
+                  className="px-2.5 py-1 rounded-full bg-[rgba(255,148,77,0.16)] border border-[rgba(255,148,77,0.45)] text-[#ffc288] text-[10.5px] font-bold cursor-pointer"
+                >
+                  🧡 990-Chart AI Trader
+                </button>
+                <button
+                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' })}
+                  className="px-2.5 py-1 rounded-full bg-[rgba(34,197,94,0.14)] border border-[rgba(34,197,94,0.4)] text-[#86efac] text-[10.5px] font-semibold cursor-pointer"
+                >
+                  💬 WhatsApp
+                </button>
+                <button
+                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'instagram' })}
+                  className="px-2.5 py-1 rounded-full bg-[rgba(236,72,153,0.14)] border border-[rgba(236,72,153,0.4)] text-[#f9a8d4] text-[10.5px] font-semibold cursor-pointer"
+                >
+                  📸 Instagram
+                </button>
+                <button
+                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'youtube' })}
+                  className="px-2.5 py-1 rounded-full bg-[rgba(239,68,68,0.14)] border border-[rgba(239,68,68,0.4)] text-[#fca5a5] text-[10.5px] font-semibold cursor-pointer"
+                >
+                  ▶️ YouTube
+                </button>
               </div>
 
               {isListening && voiceStage === 'listening' && (
@@ -285,50 +314,55 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
           </div>
         )}
 
-        {/* TAB 2: TODAY BRIEFING */}
-        {activeTab === 'today' && (
-          <div className="flex-1 max-w-2xl w-full mx-auto py-4 space-y-4">
-            <div className="p-5 rounded-2xl bg-[#0b0f17] border border-[rgba(255,255,255,0.08)] space-y-1">
-              <div className="text-2xl sm:text-3xl font-bold text-white">
-                {clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+        {/* TAB 2: ANDROID PHONE APPS, CALL & ALARM LAUNCHER */}
+        {activeTab === 'apps' && (
+          <div className="flex-1 max-w-2xl w-full mx-auto py-3 space-y-3">
+            <div className="p-3.5 rounded-2xl bg-[#0b0f17] border border-[rgba(255,255,255,0.09)] flex items-center justify-between">
+              <div>
+                <div className="text-base font-bold text-white">📱 Android Voice App &amp; System Control</div>
+                <div className="text-[11px] text-[#94a3b8]">
+                  Bol kar ya tap karke kholein: "WhatsApp kholo", "Instagram kholo", "Subah 6:30 ka alarm lagao", "Call 98765…"
+                </div>
               </div>
-              <div className="text-xs text-[#94a3b8]">
-                {clock.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              <div className="text-right text-xs text-[#cbd5e1] font-mono">
+                {clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div className="p-4 rounded-2xl bg-[#0b0f17] border border-[rgba(255,255,255,0.08)] space-y-2">
-                <div className="text-xs font-bold text-white">☑ Pending Tasks ({tasks.filter((t) => !t.done).length})</div>
-                {tasks.filter((t) => !t.done).length === 0 ? (
-                  <p className="text-xs text-[#64748b]">Say: "Task add karo gym jana hai"</p>
-                ) : (
-                  tasks
-                    .filter((t) => !t.done)
-                    .slice(0, 4)
-                    .map((t) => (
-                      <div key={t.id} className="text-xs text-[#cbd5e1]">
-                        • {t.title}
-                      </div>
-                    ))
-                )}
-              </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              {[
+                { label: '💬 WhatsApp', run: () => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' }) },
+                { label: '📸 Instagram', run: () => executePhoneAction('LAUNCH_APP', { app: 'instagram' }) },
+                { label: '▶️ YouTube App', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
+                { label: '⏰ Set 7:00 AM Alarm', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'APEX Morning Alarm' }) },
+                { label: '✈️ Telegram', run: () => executePhoneAction('LAUNCH_APP', { app: 'telegram' }) },
+                { label: '🗺️ Google Maps', run: () => executePhoneAction('LAUNCH_APP', { app: 'maps' }) },
+                { label: '🎵 Spotify', run: () => executePhoneAction('LAUNCH_APP', { app: 'spotify' }) },
+                { label: '⚙️ Wi-Fi Settings', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
+              ].map((b) => (
+                <button
+                  key={b.label}
+                  onClick={b.run}
+                  className="p-3.5 rounded-2xl bg-[#0b0f17] hover:bg-[#141b29] border border-[rgba(255,255,255,0.1)] text-xs font-semibold text-white text-center cursor-pointer transition-all"
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
 
-              <div className="p-4 rounded-2xl bg-[#0b0f17] border border-[rgba(255,255,255,0.08)] space-y-2">
-                <div className="text-xs font-bold text-white">🚀 Dedicated AI Modules</div>
-                <button
-                  onClick={onOpenTradingBot}
-                  className="w-full py-2 px-3 rounded-xl bg-[rgba(255,148,77,0.14)] border border-[rgba(255,148,77,0.4)] text-[#ffc288] text-xs font-bold text-left cursor-pointer"
-                >
-                  🧡 Open 11-Skill AI Day Trader (CoinDCX) →
-                </button>
-                <button
-                  onClick={onOpenYouTubeStudio}
-                  className="w-full py-2 px-3 rounded-xl bg-[rgba(239,68,68,0.14)] border border-[rgba(239,68,68,0.4)] text-[#fca5a5] text-xs font-bold text-left cursor-pointer"
-                >
-                  🎬 Open Autonomous YouTube Studio →
-                </button>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+              <button
+                onClick={onOpenTradingBot}
+                className="py-3 px-4 rounded-2xl bg-[rgba(255,148,77,0.14)] border border-[rgba(255,148,77,0.45)] text-[#ffc288] text-xs font-extrabold text-left cursor-pointer"
+              >
+                🧡 Open 990-Chart AI Day Trader (CoinDCX) →
+              </button>
+              <button
+                onClick={onOpenYouTubeStudio}
+                className="py-3 px-4 rounded-2xl bg-[rgba(239,68,68,0.14)] border border-[rgba(239,68,68,0.45)] text-[#fca5a5] text-xs font-extrabold text-left cursor-pointer"
+              >
+                🎬 Open Autonomous YouTube Studio →
+              </button>
             </div>
           </div>
         )}
