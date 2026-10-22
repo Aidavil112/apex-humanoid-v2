@@ -464,18 +464,26 @@ export const App: React.FC = () => {
         }
       }
 
-      // Ask brain from server
+      // Ask brain from server (with automatic failover to Cloudflare Workers AI endpoint!)
       try {
         const t0 = performance.now();
-        const r = await fetch('/chat', {
+        const chatBody = JSON.stringify({
+          text,
+          history: chatMemRef.current,
+          model: deepMode ? 'gemini-3.8-flash' : undefined,
+        });
+        let r = await fetch('/chat', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            text,
-            history: chatMemRef.current,
-            model: deepMode ? 'gemini-3.8-flash' : undefined,
-          }),
-        });
+          body: chatBody,
+        }).catch(() => null);
+        if (!r || !r.ok) {
+          r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/chat', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: chatBody,
+          });
+        }
         const j = await r.json();
         const reply = j.text || 'I hear you, standing by.';
         const ms = Math.round(performance.now() - t0);
