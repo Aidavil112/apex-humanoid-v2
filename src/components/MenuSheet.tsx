@@ -216,6 +216,34 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
             </button>
           )}
 
+          {!window.location.search.includes('app=apk') && (
+            <a
+              href="https://aidavil112.github.io/apex-humanoid-v2/APEX-Humanoid.apk"
+              download="APEX-Humanoid.apk"
+              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(79,210,255,0.16)] to-[rgba(0,245,160,0.1)] border border-[rgba(79,210,255,0.45)] hover:border-[#00f5a0] transition-all text-left no-underline"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-[rgba(79,210,255,0.2)] border border-[#4fd2ff] flex items-center justify-center text-lg">
+                  📲
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-[13px] text-white tracking-wide">
+                      Download Android App (APK)
+                    </span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(0,245,160,0.25)] text-[#00f5a0] font-bold">
+                      v2.0 APK
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#9ecbe3] leading-snug">
+                    1-Tap Install Fullscreen App · Live Voice + CoinDCX + YouTube
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-[#00f5a0] font-bold">⬇ APK</span>
+            </a>
+          )}
+
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={onOpenReel}
