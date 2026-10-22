@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { executePhoneAction } from '../engine/phoneBridge';
+import { DayTraderSkillsPanel } from './DayTraderSkillsPanel';
 import {
   ELEVEN_VOICE_PRESETS,
   ElevenLabsConfig,
@@ -50,6 +51,9 @@ interface JarvisWorkspaceProps {
   onAddMemory: (fact: string) => void;
   onDeleteMemory: (id: string) => void;
   onOpenTradingBot: () => void;
+  realInrBalance?: number;
+  orderBusy?: boolean;
+  onApproveSetup?: (symbol: string) => void | Promise<void>;
   onOpenYouTubeStudio: () => void;
   onOpenElevenLabs?: () => void;
   onPowerOff: () => void;
@@ -81,10 +85,13 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   onAddMemory,
   onDeleteMemory,
   onOpenTradingBot,
+  realInrBalance = 0,
+  orderBusy = false,
+  onApproveSetup,
   onOpenYouTubeStudio,
   onPowerOff,
 }) => {
-  const [activeTab, setActiveTab] = useState<'core' | 'voice' | 'control'>('core');
+  const [activeTab, setActiveTab] = useState<'core' | 'trader' | 'voice' | 'control'>('core');
   const [cmdInput, setCmdInput] = useState('');
   const [newTask, setNewTask] = useState('');
   const [newMem, setNewMem] = useState('');
@@ -739,6 +746,18 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
             </div>
           </div>
         )}
+
+        {/* ---------- TAB 4: EMBEDDED 1:1 REEL DAY TRADER SKILL (11 CLAUDE SKILLS + 10,000 REPLAYS!) ---------- */}
+        {activeTab === 'trader' && (
+          <div className="pointer-events-auto max-w-2xl w-full mx-auto py-1">
+            <DayTraderSkillsPanel
+              realInrBalance={realInrBalance}
+              orderBusy={orderBusy}
+              onApproveSetup={onApproveSetup}
+              onOpenRawWallet={onOpenTradingBot}
+            />
+          </div>
+        )}
       </main>
 
       {/* ==================== UNIFIED 5-TAB PRECISION BOTTOM DOCK (ZERO OVERFLOW!) ==================== */}
@@ -746,9 +765,9 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
         <div className="max-w-xl mx-auto grid grid-cols-5 gap-1">
           {[
             { id: 'core', label: 'CORE', sub: 'Voice OS', onClick: () => setActiveTab('core'), active: activeTab === 'core' },
+            { id: 'trader', label: 'DAY TRADER', sub: '11 Skills', onClick: () => setActiveTab('trader'), active: activeTab === 'trader' },
             { id: 'voice', label: 'STT / TTS', sub: 'Voices', onClick: () => setActiveTab('voice'), active: activeTab === 'voice' },
             { id: 'control', label: 'CONTROL', sub: 'Phone & OS', onClick: () => setActiveTab('control'), active: activeTab === 'control' },
-            { id: 'trader', label: 'TRADER', sub: '990 Charts', onClick: onOpenTradingBot, active: false },
             { id: 'studio', label: 'STUDIO', sub: 'YouTube AI', onClick: onOpenYouTubeStudio, active: false },
           ].map((tab) => (
             <button

@@ -2018,6 +2018,360 @@ export default {
       }
     }
 
+    // ---- 1:1 Official 11-Skill Day Trader Engine (/api/daytrader/analyze — Real CoinDCX 15m + Yahoo 60d 5m Bars + 10,000 Replays) ----
+    if (url.pathname === '/api/daytrader/analyze') {
+      try {
+        const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+        const rawSym = String(body?.symbol || url.searchParams.get('symbol') || 'BTCINR').trim().toUpperCase();
+        const accountBudget = Math.max(115, Number(body?.accountBudget || 1000));
+        const maxLossCap = Math.max(10, Number(body?.maxLoss || Math.round(accountBudget * 0.025)));
+
+        let isCrypto = rawSym.endsWith('INR') || rawSym.endsWith('USDT') || /^(BTC|ETH|SOL|XRP|DOGE|BNB|SUI|ADA|AVAX|LINK)$/.test(rawSym);
+        let currency = '₹';
+        let displaySymbol = rawSym;
+        let coinDcxMarket = '';
+        let bars = [];
+
+        if (isCrypto) {
+          const baseCoin = rawSym.replace(/(INR|USDT)$/, '');
+          coinDcxMarket = `${baseCoin}INR`;
+          displaySymbol = `${baseCoin}/INR`;
+
+          const [cRes, tRes] = await Promise.all([
+            fetch(`https://public.coindcx.com/market_data/candles?pair=B-${baseCoin}_USDT&interval=15m&limit=650`),
+            fetch('https://api.coindcx.com/exchange/ticker'),
+          ]);
+          const rawCandles = await cRes.json().catch(() => []);
+          const tickers = await tRes.json().catch(() => []);
+          const exactTick = Array.isArray(tickers)
+            ? tickers.find((x) => String(x.market).toUpperCase() === coinDcxMarket) ||
+              tickers.find((x) => String(x.market).toUpperCase() === `${baseCoin}USDT`)
+            : null;
+          const usdtTick = Array.isArray(tickers)
+            ? tickers.find((x) => String(x.market).toUpperCase() === 'USDTINR')
+            : null;
+          const usdtRate = usdtTick && Number(usdtTick.last_price) > 50 ? Number(usdtTick.last_price) : 88.0;
+
+          if (Array.isArray(rawCandles) && rawCandles.length > 30) {
+            const ordered = [...rawCandles].reverse();
+            const lastUsdtClose = Number(ordered[ordered.length - 1].close) || 1;
+            const liveInrPrice =
+              exactTick && String(exactTick.market).toUpperCase().endsWith('INR')
+                ? Number(exactTick.last_price)
+                : lastUsdtClose * usdtRate;
+            const scale = liveInrPrice / lastUsdtClose;
+            bars = ordered.map((k) => ({
+              t: Number(k.time),
+              o: Number(k.open) * scale,
+              h: Number(k.high) * scale,
+              l: Number(k.low) * scale,
+              c: Number(k.close) * scale,
+              v: Number(k.volume) || 0,
+            }));
+          }
+        } else {
+          // Real Yahoo Finance 60-day 5-minute OHLC bars (exact data source of Jakeschincariol/day-trader-skill!)
+          currency = rawSym.endsWith('.NS') || rawSym.endsWith('.BO') || rawSym === '^NSEI' ? '₹' : '$';
+          let yRes = await fetch(
+            `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=60d&interval=5m`,
+            { headers: { 'user-agent': 'Mozilla/5.0' } }
+          );
+          if (!yRes.ok) {
+            yRes = await fetch(
+              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=60d&interval=5m`,
+              { headers: { 'user-agent': 'Mozilla/5.0' } }
+            );
+          }
+          const yJson = await yRes.json();
+          const res0 = yJson?.chart?.result?.[0];
+          const ts = res0?.timestamp || [];
+          const q = res0?.indicators?.quote?.[0] || {};
+          for (let i = 0; i < ts.length; i++) {
+            const o = q.open?.[i];
+            const h = q.high?.[i];
+            const l = q.low?.[i];
+            const c = q.close?.[i];
+            if (o > 0 && h > 0 && l > 0 && c > 0) {
+              bars.push({ t: ts[i] * 1000, o, h, l, c, v: q.volume?.[i] || 0 });
+            }
+          }
+        }
+
+        if (bars.length < 40) {
+          return jsonRes({ ok: false, error: `Insufficient live candles for ${rawSym}` }, 404);
+        }
+
+        // Extract last 12 real candles for the Japanese Candlestick + Opening Range chart
+        const recent12 = bars.slice(-12);
+        const orSlice = recent12.slice(0, 3);
+        const orHigh = Math.max(...orSlice.map((b) => b.h));
+        const orLow = Math.min(...orSlice.map((b) => b.l));
+        const orMid = (orHigh + orLow) / 2;
+        const lastBar = recent12[recent12.length - 1];
+        const entry = lastBar.c;
+
+        // Calculate clean realistic Stop-Loss & Target before entering (Skill #3 & #4)
+        const rawRisk = Math.abs(entry - orMid);
+        const minRisk = entry * 0.008;
+        const maxRisk = entry * 0.032;
+        const riskPerUnit = Math.min(maxRisk, Math.max(minRisk, rawRisk));
+        const stopLoss = entry - riskPerUnit;
+        const rMultiple = 1.25;
+        const target = entry + riskPerUnit * rMultiple;
+
+        const fmtPrice = (v) =>
+          v >= 100 ? Number(v.toFixed(2)) : v >= 1 ? Number(v.toFixed(4)) : Number(v.toFixed(6));
+
+        // Build empirical bar-ratio pool from asset's own recent bars (Exact timemachine.py algorithm!)
+        const ratios = [];
+        for (let i = 1; i < bars.length; i++) {
+          const prevC = bars[i - 1].c;
+          if (prevC <= 0) continue;
+          const rO = bars[i].o / prevC;
+          const rH = bars[i].h / prevC;
+          const rL = bars[i].l / prevC;
+          const rC = bars[i].c / prevC;
+          if (rH > 0.85 && rH < 1.15 && rL > 0.85 && rL < 1.15) {
+            ratios.push([rO, rH, rL, rC]);
+          }
+        }
+
+        // Split historical bars into mini 12-bar sessions for the 48 Past Sessions strip + backtest!
+        const sessionLen = 12;
+        const pastSessions = [];
+        let pastFired = 0;
+        let pastTarget = 0;
+        let pastStop = 0;
+        let pastNeither = 0;
+
+        for (let start = 0; start + sessionLen <= bars.length - 12; start += sessionLen) {
+          const chunk = bars.slice(start, start + sessionLen);
+          const sOrH = Math.max(chunk[0].h, chunk[1].h, chunk[2].h);
+          const sOrL = Math.min(chunk[0].l, chunk[1].l, chunk[2].l);
+          const sMid = (sOrH + sOrL) / 2;
+          let trigIdx = -1;
+          for (let k = 3; k < chunk.length; k++) {
+            if (chunk[k].c > sOrH) {
+              trigIdx = k;
+              break;
+            }
+          }
+          if (trigIdx !== -1) {
+            pastFired++;
+            const sEntry = chunk[trigIdx].c;
+            const sRisk = Math.max(sEntry * 0.008, Math.abs(sEntry - sMid));
+            const sStop = sEntry - sRisk;
+            const sTgt = sEntry + sRisk * rMultiple;
+            let outcome = 'neither';
+            for (let k = trigIdx + 1; k < chunk.length; k++) {
+              if (chunk[k].l <= sStop) {
+                outcome = 'stop';
+                break;
+              }
+              if (chunk[k].h >= sTgt) {
+                outcome = 'target';
+                break;
+              }
+            }
+            if (outcome === 'target') pastTarget++;
+            else if (outcome === 'stop') pastStop++;
+            else pastNeither++;
+          }
+          pastSessions.push({
+            up: chunk[chunk.length - 1].c >= chunk[0].o,
+            pts: chunk.map((b) => Number((((b.c - chunk[0].o) / chunk[0].o) * 100).toFixed(2))),
+          });
+        }
+
+        // Deterministic Mulberry32 PRNG (seed 19 — identical reproducibility to timemachine.py!)
+        let seed = 19;
+        const rand = () => {
+          seed |= 0;
+          seed = (seed + 0x6d2b79f5) | 0;
+          let z = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+          z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z;
+          return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+        };
+
+        const SIMS = 10000;
+        const HORIZON = 26;
+        let hitTarget = 0;
+        let hitStop = 0;
+        let hitNeither = 0;
+        let sumR = 0;
+        const closingPrices = [];
+        const samplePaths = [];
+        const poolLen = ratios.length;
+
+        for (let s = 0; s < SIMS; s++) {
+          let p = entry;
+          let outcome = 'neither';
+          const recordPath = s < 75;
+          const path = recordPath ? [fmtPrice(entry)] : null;
+
+          for (let step = 0; step < HORIZON; step++) {
+            const bar = ratios[Math.floor(rand() * poolLen)];
+            const bH = p * bar[1];
+            const bL = p * bar[2];
+            const bC = p * bar[3];
+
+            if (outcome === 'neither') {
+              // Exact conservative rule from timemachine.py: check stop BEFORE target in every bar!
+              if (bL <= stopLoss) {
+                outcome = 'stop';
+              } else if (bH >= target) {
+                outcome = 'target';
+              }
+            }
+            p = bC;
+            if (recordPath && path) path.push(fmtPrice(p));
+          }
+
+          closingPrices.push(p);
+          if (outcome === 'target') {
+            hitTarget++;
+            sumR += rMultiple;
+          } else if (outcome === 'stop') {
+            hitStop++;
+            sumR -= 1.0;
+          } else {
+            hitNeither++;
+            sumR += (p - entry) / riskPerUnit;
+          }
+          if (recordPath && path) samplePaths.push(path);
+        }
+
+        const targetFirstPct = Number(((hitTarget / SIMS) * 100).toFixed(1));
+        const stopFirstPct = Number(((hitStop / SIMS) * 100).toFixed(1));
+        const stillOpenPct = Number((100 - targetFirstPct - stopFirstPct).toFixed(1));
+        const avgR = Number((sumR / SIMS).toFixed(2));
+
+        // Build 21-bin Bell-Curve Histogram between 2nd and 98th percentile (Exact frame_12 visual!)
+        closingPrices.sort((a, b) => a - b);
+        const pLow = Math.min(stopLoss * 0.992, closingPrices[Math.floor(SIMS * 0.02)]);
+        const pHigh = Math.max(target * 1.008, closingPrices[Math.floor(SIMS * 0.98)]);
+        const BINS = 21;
+        const binWidth = (pHigh - pLow) / BINS || 1;
+        const counts = new Array(BINS).fill(0);
+        for (const cp of closingPrices) {
+          const idx = Math.min(BINS - 1, Math.max(0, Math.floor((cp - pLow) / binWidth)));
+          counts[idx]++;
+        }
+        const maxBin = Math.max(1, ...counts);
+        const histogram = counts.map((cnt, idx) => {
+          const midPrice = pLow + (idx + 0.5) * binWidth;
+          return {
+            price: fmtPrice(midPrice),
+            pct: Math.round((cnt / maxBin) * 100),
+            zone: midPrice <= stopLoss ? 'stop' : midPrice >= target ? 'target' : 'mid',
+          };
+        });
+
+        // Honest Verdict logic (Exact timemachine.py break-even gap formula!)
+        const resolved = hitTarget + hitStop;
+        const winShare = resolved > 0 ? hitTarget / resolved : 0.5;
+        const breakEvenShare = 1 / (1 + rMultiple);
+        const edgeGap = winShare - breakEvenShare;
+        let verdictTitle = 'Close to a coin flip:';
+        if (edgeGap >= 0.14) verdictTitle = 'Strongly toward the target:';
+        else if (edgeGap >= 0.05) verdictTitle = 'Leans toward the target:';
+        else if (edgeGap <= -0.14) verdictTitle = 'Strongly toward the stop:';
+        else if (edgeGap <= -0.05) verdictTitle = 'Leans toward the stop:';
+
+        const verdictDetail =
+          `Target hit first ${targetFirstPct}% vs Stop ${stopFirstPct}% across 10,000 sessions (${stillOpenPct}% still open at close, avg ${avgR >= 0 ? '+' : ''}${avgR}R). ` +
+          `Past backtest: fired ${pastFired} times (${pastTarget} target, ${pastStop} stop).`;
+
+        // Skill #2 (/trader-news): Fetch real breaking headlines from Google News RSS
+        const newsItems = [];
+        try {
+          const cleanQuery = isCrypto ? `${rawSym.replace(/INR|USDT/, '')} crypto market` : `${rawSym} stock earnings market`;
+          const nRes = await fetch(
+            `https://news.google.com/rss/search?q=${encodeURIComponent(cleanQuery)}&hl=en-US&gl=US&ceid=US:en`
+          );
+          if (nRes.ok) {
+            const xml = await nRes.text();
+            const matches = [
+              ...xml.matchAll(
+                /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>[\s\S]*?<pubDate>(.*?)<\/pubDate>/g
+              ),
+            ].slice(0, 6);
+            matches.forEach((m, idx) => {
+              const title = String(m[1] || '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
+              const dt = new Date(m[2] || Date.now());
+              const timeStr = isNaN(dt.getTime())
+                ? 'LIVE'
+                : dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+              const tag =
+                /earning|revenue|quarter|profit/i.test(title)
+                  ? 'earnings'
+                  : /merge|deal|acquire|partner|etf|sec/i.test(title)
+                  ? 'deal'
+                  : 'momentum';
+              newsItems.push({ time: timeStr, title, tag, highlight: idx === 0 });
+            });
+          }
+        } catch {}
+
+        // Skill #6 & #7 (/trader-budget + /trader-risk) + Skill #8 (/trader-broker)
+        const rawQty = Math.min(maxLossCap / riskPerUnit, accountBudget / entry);
+        const qty = isCrypto
+          ? Number(rawQty.toFixed(entry > 50000 ? 5 : entry > 500 ? 3 : 1))
+          : Math.max(1, Math.floor(rawQty));
+        const actualOrderValue = Number((qty * entry).toFixed(2));
+        const estMaxLoss = Number((qty * riskPerUnit).toFixed(2));
+        const riskPass = estMaxLoss <= maxLossCap * 1.15 && actualOrderValue >= (isCrypto ? 105 : 1);
+
+        return jsonRes({
+          ok: true,
+          symbol: displaySymbol,
+          rawSymbol: rawSym,
+          coinDcxMarket,
+          isCrypto,
+          currency,
+          openingRange: { high: fmtPrice(orHigh), low: fmtPrice(orLow), mid: fmtPrice(orMid) },
+          plan: {
+            entry: fmtPrice(entry),
+            stopLoss: fmtPrice(stopLoss),
+            target: fmtPrice(target),
+            rMultiple,
+          },
+          candles: recent12.map((b) => ({
+            time: new Date(b.t).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }),
+            o: fmtPrice(b.o),
+            h: fmtPrice(b.h),
+            l: fmtPrice(b.l),
+            c: fmtPrice(b.c),
+          })),
+          timeMachine: {
+            replays: SIMS,
+            targetFirstPct,
+            stopFirstPct,
+            stillOpenPct,
+            avgR,
+            verdictTitle,
+            verdictDetail,
+            samplePaths,
+            histogram,
+            pastSessions: pastSessions.slice(-48),
+            pastSummary: { fired: pastFired, target: pastTarget, stop: pastStop, neither: pastNeither },
+          },
+          news: newsItems,
+          ticket: {
+            qty,
+            orderValue: actualOrderValue,
+            maxLoss: estMaxLoss,
+            riskPass,
+            statusLine: riskPass
+              ? 'READY: risk PASS, waiting for your yes'
+              : 'HOLD: adjust trade budget above ₹115 CoinDCX min notional',
+          },
+        });
+      } catch (e) {
+        return jsonRes({ ok: false, error: e.message }, 500);
+      }
+    }
+
     // ---- Check & Verify Live YouTube Connection Status (/yt/status) ----
     if (url.pathname === '/yt/status') {
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};

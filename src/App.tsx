@@ -1473,6 +1473,9 @@ export const App: React.FC = () => {
           onAddMemory={addJarvisMemory}
           onDeleteMemory={deleteJarvisMemory}
           onOpenTradingBot={() => setTradingBotOpen(true)}
+          realInrBalance={autoTrader.liveAccount?.totalInr || autoTrader.balance || 0}
+          orderBusy={autoTrader.orderBusy}
+          onApproveSetup={(sym) => autoTrader.manualBuy(sym)}
           onOpenYouTubeStudio={() => setYoutubeOpen(true)}
           onOpenElevenLabs={() => setElevenOpen(true)}
           onPowerOff={togglePower}
