@@ -59,46 +59,79 @@ async function send(token, chatId, text, extra = {}) {
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+async function callGoogleEndpoint(url, key, body) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-goog-api-key': key,
+    },
+    body: JSON.stringify(body),
+  });
+  const txt = await r.text();
+  let j = null;
+  try {
+    j = JSON.parse(txt);
+  } catch {}
+  return { ok: r.ok, status: r.status, json: j, errMsg: j?.error?.message || txt.slice(0, 160) };
+}
+
 async function askGemini(key, text, history = []) {
   const cleanKey = String(key).trim();
-  const models = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.5-flash-lite', 'gemini-2.0-flash'];
   const contents = [
+    { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
+    { role: 'model', parts: [{ text: 'Ready! Main APEX Humanoid hoon.' }] },
     ...history.slice(-8).map((h) => ({
       role: h.role === 'model' ? 'model' : 'user',
       parts: [{ text: String(h.text).slice(0, 800) }],
     })),
     { role: 'user', parts: [{ text }] },
   ];
+  const payload = {
+    contents,
+    generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
+  };
+
   let lastErr = '';
-  for (const m of models) {
+
+  // 1) Try Google AI Studio endpoint first (AIza... and AI Studio AQ... keys)
+  for (const m of ['gemini-2.5-flash', 'gemini-flash-latest']) {
     try {
-      const r = await fetch(
+      const res = await callGoogleEndpoint(
         `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'x-goog-api-key': cleanKey,
-          },
-          body: JSON.stringify({
-            systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-            contents,
-            generationConfig: { temperature: 0.7, maxOutputTokens: 500 },
-          }),
-        }
+        cleanKey,
+        payload
       );
-      if (!r.ok) {
-        lastErr = `${m}: HTTP ${r.status}`;
-        continue;
+      if (res.ok) {
+        const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+        if (out.trim()) return out.trim();
       }
-      const j = await r.json();
-      const out = (j?.candidates?.[0]?.content?.parts || []).map((p) => p.text).join('');
-      if (out && out.trim()) return out.trim();
-      lastErr = `${m}: empty response`;
+      lastErr = `AIStudio ${m} (${res.status}): ${res.errMsg}`;
+      // If key type belongs to Vertex AI Express Mode (401/403), jump straight to Vertex endpoint!
+      if (res.status === 401 || res.status === 403) break;
     } catch (e) {
       lastErr = e.message;
     }
   }
+
+  // 2) Try Google Cloud Vertex AI Express Mode endpoint (AQ... Vertex Express API keys!)
+  for (const m of ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']) {
+    try {
+      const res = await callGoogleEndpoint(
+        `https://aiplatform.googleapis.com/v1/publishers/google/models/${m}:generateContent`,
+        cleanKey,
+        payload
+      );
+      if (res.ok) {
+        const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+        if (out.trim()) return out.trim();
+      }
+      lastErr = `Vertex ${m} (${res.status}): ${res.errMsg}`;
+    } catch (e) {
+      lastErr = e.message;
+    }
+  }
+
   throw new Error(lastErr || 'Gemini call failed');
 }
 

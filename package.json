@@ -9,11 +9,7 @@
     "build": "vite build",
     "prestart": "vite build",
     "start": "tsx server.ts",
-    "lint": "tsc --noEmit",
-    "telegram": "tsx telegram.ts",
-    "telegram:info": "tsx scripts/telegram-setup.ts info",
-    "telegram:webhook": "tsx scripts/telegram-setup.ts webhook",
-    "telegram:poll": "tsx scripts/telegram-setup.ts poll"
+    "lint": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
@@ -39,7 +35,6 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.0.7",
-    "vite": "^6.1.1",
-    "wrangler": "^3.114.17"
+    "vite": "^6.1.1"
   }
 }

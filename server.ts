@@ -482,30 +482,6 @@ app.get(['/.well-known/assetlinks.json', '/assetlinks.json'], (req: Request, res
   ]);
 });
 
-/* --- Telegram bot webhook (optional) ---
-   Enable by setting TELEGRAM_BOT_TOKEN on the host, then point Telegram at
-   https://<your-domain>/telegram/webhook (see TELEGRAM.md).
-   Because the import is dynamic, a missing token never blocks startup. */
-let tgHandler: any = null;
-if (process.env.TELEGRAM_BOT_TOKEN) {
-  import('./telegram')
-    .then((m) => { tgHandler = m.webhookHandler; console.log('🤖 Telegram webhook mounted at POST /telegram/webhook'); })
-    .catch((e) => console.error('telegram module load failed:', e?.message));
-}
-app.post('/telegram/webhook', (req: Request, res: Response) => {
-  if (!tgHandler) return res.status(503).json({ ok: false, error: 'telegram not configured' });
-  return tgHandler(req, res);
-});
-app.get('/telegram', (req: Request, res: Response) => {
-  res.setHeader('cache-control', 'no-store');
-  res.json({
-    configured: !!process.env.TELEGRAM_BOT_TOKEN,
-    webhookSecretSet: !!process.env.TELEGRAM_WEBHOOK_SECRET,
-    lockEnabled: !!(process.env.TELEGRAM_ALLOWED_CHATS || '').trim(),
-    webhookPath: '/telegram/webhook',
-  });
-});
-
 app.post('/chat', async (req: Request, res: Response) => {
   const { text, history } = req.body || {};
   const safeText = String(text || '').slice(0, 2000);

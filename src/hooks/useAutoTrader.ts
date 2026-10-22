@@ -125,7 +125,6 @@ const INITIAL_PAIRS: MarketPairData[] = [
 ];
 
 interface UseAutoTraderProps {
-  enabled?: boolean;
   currentMood: MoodType;
   currentHeartRate: number;
   onTriggerSentimentTrade?: (mood: MoodType, msg: string) => void;
@@ -144,7 +143,6 @@ export const GEO_HUBS = [
 ];
 
 export function useAutoTrader({
-  enabled = true,
   currentMood,
   currentHeartRate,
   onTriggerSentimentTrade,
@@ -253,9 +251,8 @@ export function useAutoTrader({
   const onTriggerSentimentTradeRef = useRef(onTriggerSentimentTrade);
   onTriggerSentimentTradeRef.current = onTriggerSentimentTrade;
 
-  // Real-time market price ticker (runs continuously when system is powered on)
+  // Real-time market price ticker (runs continuously in background)
   useEffect(() => {
-    if (!enabled) return;
     const interval = setInterval(() => {
       setPairs((prev) =>
         prev.map((p) => {
@@ -305,11 +302,11 @@ export function useAutoTrader({
     }, 2200);
 
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, []);
 
-  // Autonomous Trading & Market Analysis Engine (Runs in background when system is powered on!)
+  // Autonomous Trading & Market Analysis Engine (Runs in background!)
   useEffect(() => {
-    if (!enabled || !autoTrading) return;
+    if (!autoTrading) return;
 
     const botInterval = setInterval(() => {
       const currentPairs = pairsRef.current;
@@ -463,7 +460,7 @@ export function useAutoTrader({
     }, 7500);
 
     return () => clearInterval(botInterval);
-  }, [enabled, autoTrading, onTriggerSentimentTrade]);
+  }, [autoTrading, onTriggerSentimentTrade]);
 
   // Manual Trigger: Force Fake BUY
   const manualBuy = useCallback(

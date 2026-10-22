@@ -2,38 +2,30 @@
   "name": "APEX Humanoid",
   "short_name": "APEX",
   "description": "Procedural WebGL2 particle humanoid with voice agent, mood engine and creative tools.",
-  "id": "./",
-  "start_url": "./?source=pwa",
-  "scope": "./",
+  "id": "/",
+  "start_url": "/?source=pwa",
+  "scope": "/",
   "display": "standalone",
-  "display_override": [
-    "standalone",
-    "fullscreen",
-    "minimal-ui"
-  ],
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
   "orientation": "portrait",
   "background_color": "#04090e",
   "theme_color": "#04090e",
-  "categories": [
-    "entertainment",
-    "productivity",
-    "utilities"
-  ],
+  "categories": ["entertainment", "productivity", "utilities"],
   "icons": [
     {
-      "src": "./icon-180.png",
+      "src": "/icon-180.png",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./icon-512.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "./icon-512.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

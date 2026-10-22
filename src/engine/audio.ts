@@ -8,7 +8,6 @@ class AudioEngine {
   private lastTick: number = 0;
   public soundOn: boolean = false;
   public sfxOn: boolean = true;
-  public powered: boolean = true;
   public analyser: AnalyserNode | null = null;
   public audioEl: HTMLAudioElement | null = null;
   public rmsBuf: Float32Array = new Float32Array(512);
@@ -19,7 +18,6 @@ class AudioEngine {
   private synthVoiceGain: GainNode | null = null;
 
   public ensureCtx(): AudioContext | null {
-    if (!this.powered) return null;
     if (this.actx) {
       if (this.actx.state === 'suspended') {
         this.actx.resume().catch(() => {});
@@ -304,53 +302,6 @@ class AudioEngine {
     this.sweep({ from: 600, to: 2600, dur: 0.4, gain: 0.05 });
   }
 
-  /** Hard master shutdown: silences all buses immediately, tears down ambient oscillators, and suspends hardware AudioContext. */
-  public powerOff() {
-    this.powered = false;
-    this.disconnectMicStream();
-    for (const n of this.nodes) {
-      try {
-        n.stop();
-        n.disconnect();
-      } catch (e) {}
-    }
-    this.nodes = [];
-    if (this.actx) {
-      const t = this.actx.currentTime;
-      if (this.master) {
-        this.master.gain.cancelScheduledValues(t);
-        this.master.gain.value = 0;
-      }
-      if (this.sfxBus) {
-        this.sfxBus.gain.cancelScheduledValues(t);
-        this.sfxBus.gain.value = 0;
-      }
-      if (this.synthVoiceGain) {
-        this.synthVoiceGain.gain.cancelScheduledValues(t);
-        this.synthVoiceGain.gain.value = 0;
-      }
-      if (this.actx.state !== 'closed') {
-        this.actx.suspend().catch(() => {});
-      }
-    }
-  }
-
-  /** Restore master audio engine after powerOff(). */
-  public powerOn(soundEnabled: boolean, sfxEnabled: boolean) {
-    this.powered = true;
-    this.sfxOn = sfxEnabled;
-    this.soundOn = soundEnabled;
-    const ctx = this.ensureCtx();
-    if (ctx && this.sfxBus) {
-      this.sfxBus.gain.cancelScheduledValues(ctx.currentTime);
-      this.sfxBus.gain.value = sfxEnabled ? 0.85 : 0.0;
-    }
-    if (soundEnabled) {
-      this.setSound(true);
-    }
-    this.powerUp();
-  }
-
   public theme() {
     [523, 659, 784].forEach((f, i) =>
       this.tone({ freq: f, dur: 0.13, gain: 0.055, delay: i * 0.06 })
@@ -358,7 +309,7 @@ class AudioEngine {
   }
 
   public analyserRms(): number {
-    if (!this.powered || !this.analyser) return 0;
+    if (!this.analyser) return 0;
     this.analyser.getFloatTimeDomainData(this.rmsBuf as any);
     let s = 0;
     for (let i = 0; i < this.rmsBuf.length; i++) s += this.rmsBuf[i] * this.rmsBuf[i];
