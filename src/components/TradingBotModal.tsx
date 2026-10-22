@@ -209,11 +209,19 @@ export const TradingBotModal: React.FC<TradingBotModalProps> = ({
     const keyToUse = k !== undefined ? k : coindcxKey;
     const secretToUse = s !== undefined ? s : coindcxSecret;
     try {
-      const r = await fetch('/api/coindcx/balances', {
+      const balBody = JSON.stringify({ apiKey: keyToUse, apiSecret: secretToUse });
+      let r = await fetch('/api/coindcx/balances', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ apiKey: keyToUse, apiSecret: secretToUse }),
-      });
+        body: balBody,
+      }).catch(() => null);
+      if (!r || !r.ok) {
+        r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/api/coindcx/balances', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: balBody,
+        });
+      }
       const j = await r.json();
       if (j.ok) {
         setIsLiveConnected(j.live);

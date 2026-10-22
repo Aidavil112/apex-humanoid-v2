@@ -251,11 +251,18 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
       let ok = false;
       for (let retry = 0; retry < 2 && !ok; retry++) {
         try {
-          const vr = await fetch('/yt/voice', {
+          let vr = await fetch('/yt/voice', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ text: txt }),
-          });
+          }).catch(() => null);
+          if (!vr || !vr.ok) {
+            vr = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/yt/voice', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ text: txt }),
+            });
+          }
           if (vr.ok) {
             voices.push(await vr.arrayBuffer());
             ok = true;

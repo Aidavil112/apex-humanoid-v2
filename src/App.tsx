@@ -199,11 +199,19 @@ export const App: React.FC = () => {
     async (text: string, seq: number, onEnd?: () => void) => {
       if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
       try {
-        const res = await fetch('/yt/voice', {
+        const voiceBody = JSON.stringify({ text, voice: langMode === 'hi-IN' ? 'Puck' : 'Kore' });
+        let res = await fetch('/yt/voice', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, voice: langMode === 'hi-IN' ? 'Puck' : 'Kore' }),
-        });
+          body: voiceBody,
+        }).catch(() => null);
+        if (!res || !res.ok) {
+          res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/yt/voice', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: voiceBody,
+          });
+        }
         if (!res.ok) throw new Error('Voice fetch status ' + res.status);
         if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
         const blob = await res.blob();
