@@ -112,12 +112,13 @@ const ELEVEN_SKILLS = [
 ];
 
 const QUICK_TICKERS = [
-  { id: 'TSLA', label: 'TSLA (Reel Demo · Live US)' },
   { id: 'BTCINR', label: 'BTC/INR (CoinDCX ₹)' },
   { id: 'SOLINR', label: 'SOL/INR (CoinDCX ₹)' },
-  { id: 'ETHINR', label: 'ETH/INR (CoinDCX ₹)' },
-  { id: 'NVDA', label: 'NVDA (Live US)' },
+  { id: '^NSEI', label: 'NIFTY 50 (NSE ₹)' },
+  { id: '^NSEBANK', label: 'BANKNIFTY (NSE ₹)' },
   { id: 'RELIANCE.NS', label: 'RELIANCE (NSE ₹)' },
+  { id: 'TSLA', label: 'TSLA (Reel Demo)' },
+  { id: 'NVDA', label: 'NVDA (US)' },
 ];
 
 export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
@@ -128,7 +129,8 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
   onApproveTrade,
   onOpenRawWallet,
 }) => {
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('TSLA');
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('BTCINR');
+  const [intervalTf, setIntervalTf] = useState<'1m' | '5m' | '15m' | '1h'>('15m');
   const [customSymbol, setCustomSymbol] = useState<string>('');
   const [tradeInr, setTradeInr] = useState<number>(orderInrAmount || 150);
   const [scanSetups, setScanSetups] = useState<ScanSetup[]>([]);
@@ -165,6 +167,7 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
               symbol: sym,
+              interval: intervalTf,
               accountBudget: Math.max(budget, realInrBalance > 115 ? realInrBalance : 1000),
               maxLoss: Math.max(25, Math.round(budget * 0.15)),
             }),
@@ -186,12 +189,12 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
         setLoadingDeep(false);
       }
     },
-    [realInrBalance]
+    [realInrBalance, intervalTf]
   );
 
   useEffect(() => {
     runFullScanAndAnalyze(selectedSymbol, tradeInr);
-  }, [selectedSymbol]);
+  }, [selectedSymbol, intervalTf]);
 
   const scrollToSection = (id: string) => {
     const el = document.getElementById(id);
@@ -652,7 +655,20 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
 
           <div className="flex items-center justify-between text-xs font-mono text-[#7D7064]">
             <span>{deep.symbol} · plan set before the entry</span>
-            <PixelMascot badge="⛳" size={28} />
+            <div className="flex items-center gap-1">
+              {(['1m', '5m', '15m', '1h'] as const).map((tf) => (
+                <button
+                  key={tf}
+                  onClick={() => setIntervalTf(tf)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                    intervalTf === tf ? 'bg-[#1E1915] text-white' : 'bg-[#F2EAE0] text-[#5C4F43]'
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+              <PixelMascot badge="⛳" size={26} />
+            </div>
           </div>
 
           {renderCandlestickSvg()}

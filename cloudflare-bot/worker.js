@@ -1383,20 +1383,20 @@ export default {
       return jsonRes({ ok: true, grounded: false, headlines: [] });
     }
 
-    // ---- Web App AI Chat (Professional JARVIS Persona — Supports Voice & Text!) ----
+    // ---- Web App AI Chat (Unified APEX Persona — Crisp Hinglish/Hindi & English!) ----
     if (request.method === 'POST' && url.pathname === '/chat') {
       try {
         const body = await request.json();
         const isVoice = Boolean(body?.voiceMode);
-        const jarvisSys =
-          'You are J.A.R.V.I.S. — an ultra-capable, calm, sharp, executive AI voice assistant (like Tony Stark\'s JARVIS). ' +
-          'Reply in natural, respectful, concise Hinglish or English (matching the user\'s language) in at most 1–2 short crisp sentences. ' +
-          'Never ramble, never use silly slang like "Arre bhai", and NEVER mention crypto/trading unless explicitly asked.';
+        const apexSys =
+          'Tum APEX ho — user ke smart 3D AI Humanoid assistant. ' +
+          'Hamesha natural, crisp, intelligent Roman Hinglish / Hindi ya English me sirf 1–2 chhote sentences me jawab do. ' +
+          'Lamba bhashan mat do aur kabhi bhi apni taraf se crypto/trading ka zikr mat karo jab tak user khud na pooche.';
         const out = await askBrain(
           env,
           String(body?.text || 'Hello').slice(0, 1000),
           Array.isArray(body?.history) ? body.history : [],
-          isVoice ? jarvisSys : jarvisSys,
+          apexSys,
           isVoice ? 160 : 420
         );
         const cleanReply = out.text.replace(/[*#_`~]/g, '').trim();
@@ -1547,12 +1547,11 @@ export default {
             } catch {}
           }
 
-          // Pure Professional J.A.R.V.I.S. Voice Persona — Concise, Intelligent, Zero Rambling!
+          // Pure Unified APEX 3D Voice Persona — Crisp, Fast, Zero Rambling!
           const voiceSys =
-            'You are J.A.R.V.I.S. — an ultra-intelligent, calm, sharp executive voice OS like Tony Stark\'s JARVIS. ' +
-            'Speak concisely in natural Hinglish or English (1–2 crisp sentences ONLY, under 28 words whenever possible). ' +
-            'Sound composed, capable, and professional ("Right away, Sir.", "Ji Sir, ..."). ' +
-            'NEVER ramble, NEVER comment on background noise, and NEVER mention crypto/trading unless directly asked.';
+            'Tum APEX ho — user ke Android phone me rehne wale smart 3D AI Humanoid assistant. ' +
+            'Hamesha natural, crisp, polite Hinglish ya English me sirf 1–2 chhote sentences (max 28 words) me jawab do. ' +
+            'KABHI BHI background noise par comment mat karo aur apni taraf se trading/crypto ka zikr mat karo.';
           const out = await askBrain(
             env,
             `${cleaned.slice(0, 700)}${liveWebSnippet}${walletCtx ? `\n[User Memory: ${walletCtx}]` : ''}`,
@@ -1560,7 +1559,7 @@ export default {
             voiceSys,
             145
           );
-          replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Standing by, Sir.';
+          replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Ji Boss, main tayyar hoon.';
         }
 
         // Synthesize HD Voice right inside the same Worker call (unless client plays Direct ElevenLabs on phone IP!)
@@ -2018,11 +2017,12 @@ export default {
       }
     }
 
-    // ---- 1:1 Official 11-Skill Day Trader Engine (/api/daytrader/analyze — Real CoinDCX 15m + Yahoo 60d 5m Bars + 10,000 Replays) ----
+    // ---- 1:1 Official 11-Skill Day Trader Engine (/api/daytrader/analyze — Multi-Timeframe Live Candles + 10,000 Replays) ----
     if (url.pathname === '/api/daytrader/analyze') {
       try {
         const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
         const rawSym = String(body?.symbol || url.searchParams.get('symbol') || 'BTCINR').trim().toUpperCase();
+        const reqTf = String(body?.interval || '5m').toLowerCase();
         const accountBudget = Math.max(115, Number(body?.accountBudget || 1000));
         const maxLossCap = Math.max(10, Number(body?.maxLoss || Math.round(accountBudget * 0.025)));
 
@@ -2036,9 +2036,10 @@ export default {
           const baseCoin = rawSym.replace(/(INR|USDT)$/, '');
           coinDcxMarket = `${baseCoin}INR`;
           displaySymbol = `${baseCoin}/INR`;
+          const cdxTf = reqTf === '1m' ? '1m' : reqTf === '1h' ? '1h' : '15m';
 
           const [cRes, tRes] = await Promise.all([
-            fetch(`https://public.coindcx.com/market_data/candles?pair=B-${baseCoin}_USDT&interval=15m&limit=650`),
+            fetch(`https://public.coindcx.com/market_data/candles?pair=B-${baseCoin}_USDT&interval=${cdxTf}&limit=650`),
             fetch('https://api.coindcx.com/exchange/ticker'),
           ]);
           const rawCandles = await cRes.json().catch(() => []);
@@ -2070,15 +2071,17 @@ export default {
             }));
           }
         } else {
-          // Real Yahoo Finance 60-day 5-minute OHLC bars (exact data source of Jakeschincariol/day-trader-skill!)
-          currency = rawSym.endsWith('.NS') || rawSym.endsWith('.BO') || rawSym === '^NSEI' ? '₹' : '$';
+          // Real Yahoo Finance OHLC bars (1m=7d, 5m/15m=60d, 1h=6mo)
+          currency = rawSym.endsWith('.NS') || rawSym.endsWith('.BO') || rawSym.startsWith('^NSE') ? '₹' : '$';
+          const yTf = ['1m', '5m', '15m', '1h'].includes(reqTf) ? reqTf : '5m';
+          const yRange = yTf === '1m' ? '7d' : yTf === '1h' ? '6mo' : '60d';
           let yRes = await fetch(
-            `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=60d&interval=5m`,
+            `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=${yRange}&interval=${yTf}`,
             { headers: { 'user-agent': 'Mozilla/5.0' } }
           );
           if (!yRes.ok) {
             yRes = await fetch(
-              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=60d&interval=5m`,
+              `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(rawSym)}?range=${yRange}&interval=${yTf}`,
               { headers: { 'user-agent': 'Mozilla/5.0' } }
             );
           }

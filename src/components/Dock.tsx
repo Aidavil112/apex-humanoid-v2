@@ -87,20 +87,10 @@ export const Dock: React.FC<DockProps> = ({
         {isListening ? '🔴 END CALL' : '📞 LIVE CALL'}
       </button>
 
-      {onOpenJarvis && (
-        <button
-          onClick={onOpenJarvis}
-          aria-label="Open JARVIS OS Mode"
-          className="cursor-pointer font-mono text-[10.5px] tracking-[0.08em] uppercase rounded-xl px-2.5 py-2 transition-all duration-200 border whitespace-nowrap text-white bg-[#0d121a] border-[rgba(255,255,255,0.45)] hover:border-white font-bold"
-        >
-          ◉ APEX OS
-        </button>
-      )}
-
       {onOpenTrading && (
         <button
           onClick={onOpenTrading}
-          aria-label="Open Real CoinDCX Trading"
+          aria-label="Open Real CoinDCX & 11-Skill Day Trader"
           className={`cursor-pointer font-mono text-[10.5px] tracking-[0.08em] uppercase rounded-xl px-2.5 py-2 transition-all duration-200 border whitespace-nowrap flex items-center gap-1 ${
             autoTrading
               ? 'text-[#00f5a0] bg-[rgba(0,245,160,0.16)] border-[#00f5a0] font-bold'
@@ -109,6 +99,16 @@ export const Dock: React.FC<DockProps> = ({
         >
           <span>💹</span>
           <span>{autoTrading ? 'AUTO●' : 'TRADE'}</span>
+        </button>
+      )}
+
+      {onOpenJarvis && (
+        <button
+          onClick={onOpenJarvis}
+          aria-label="Open Phone Control & STT/TTS"
+          className="cursor-pointer font-mono text-[10.5px] tracking-[0.08em] uppercase rounded-xl px-2.5 py-2 transition-all duration-200 border whitespace-nowrap text-[#d7f1ff] bg-[rgba(79,210,255,0.1)] border-[rgba(79,210,255,0.32)] hover:border-[#4fd2ff] font-bold"
+        >
+          📱 PHONE
         </button>
       )}
 

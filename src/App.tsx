@@ -107,7 +107,8 @@ export const App: React.FC = () => {
   const [elevenOpen, setElevenOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
-  const [jarvisOpen, setJarvisOpen] = useState<boolean>(true);
+  const [jarvisOpen, setJarvisOpen] = useState<boolean>(false);
+  const [menuTab, setMenuTab] = useState<'apps' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
   const [hologramOverlayMode, setHologramOverlayMode] = useState<boolean>(false);
   const [autoContinuousMode, setAutoContinuousMode] = useState<boolean>(false);
   const autoContinuousRef = useRef<boolean>(false);
@@ -1311,9 +1312,9 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* Floating Live 2-Way Voice Call Bar when Live Voice is Active in legacy 3D view */}
-      {entered && poweredOn && !jarvisOpen && isListening && (
-        <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(86px+env(safe-area-inset-bottom))] z-30 w-[92vw] max-w-md px-3.5 py-2.5 rounded-2xl bg-[rgba(4,14,22,0.88)] border border-[rgba(0,245,160,0.45)] backdrop-blur-xl shadow-[0_12px_36px_rgba(0,0,0,0.85)] flex flex-col gap-1.5 font-mono">
+      {/* Floating Live 2-Way Voice + STT/TTS HUD right on the main 3D APEX Screen */}
+      {entered && poweredOn && !jarvisOpen && (isListening || liveVoiceStage === 'speaking' || liveVoiceStage === 'thinking') && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(86px+env(safe-area-inset-bottom))] z-30 w-[92vw] max-w-md px-3.5 py-2.5 rounded-2xl bg-[rgba(4,14,22,0.9)] border border-[rgba(79,210,255,0.35)] backdrop-blur-xl shadow-[0_12px_36px_rgba(0,0,0,0.85)] flex flex-col gap-1.5 font-mono">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-bold">
               <span
@@ -1325,36 +1326,50 @@ export const App: React.FC = () => {
                     : 'bg-[#00f5a0] animate-ping'
                 }`}
               />
-              <span className="text-white">
+              <span className="text-white text-[11px]">
                 {liveVoiceStage === 'speaking'
-                  ? '🔊 APEX Bol Raha Hai…'
+                  ? '🔊 APEX Speaking…'
                   : liveVoiceStage === 'thinking'
-                  ? '🧠 APEX Soch Raha Hai…'
-                  : '🟢 LIVE VOICE ON — Boliye…'}
+                  ? '🧠 APEX Processing…'
+                  : '🟢 Listening — Speak Now…'}
               </span>
             </div>
 
-            {liveVoiceStage === 'speaking' ? (
+            <div className="flex items-center gap-1">
               <button
-                onClick={() => {
-                  cancelAllSpeech();
-                  busyRef.current = false;
-                  setLiveVoiceStage('listening');
-                  setMood('listening');
-                }}
-                className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(255,79,112,0.2)] border border-[#ff4f70] text-[#ff8fa3] text-[10px] font-bold"
+                onClick={() => setAutoContinuousMode((v) => !v)}
+                className={`cursor-pointer px-2 py-1 rounded-lg text-[9.5px] font-bold border ${
+                  autoContinuousMode
+                    ? 'bg-[rgba(79,210,255,0.22)] border-[#4fd2ff] text-[#dff6ff]'
+                    : 'bg-[rgba(255,255,255,0.08)] border-[rgba(255,255,255,0.2)] text-[#9fb8cc]'
+                }`}
+                title="Switch between Single-Turn (Tap to Speak) & Continuous Auto Conversation"
               >
-                ⏹ Roko / Bolo
+                {autoContinuousMode ? '♾ AUTO ON' : '1× SINGLE'}
               </button>
-            ) : (
-              <button
-                onClick={() => sendChunkNowRef.current?.()}
-                className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(0,245,160,0.18)] border border-[#00f5a0] text-[#00f5a0] text-[10px] font-bold"
-                title="Shanti na ho to bolne ke baad Bhejo dabayein"
-              >
-                📤 Bhejo
-              </button>
-            )}
+
+              {liveVoiceStage === 'speaking' ? (
+                <button
+                  onClick={() => {
+                    echoCooldownUntilRef.current = Date.now() + 900;
+                    cancelAllSpeech();
+                    busyRef.current = false;
+                    setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+                    setMood(micStreamRef.current ? 'listening' : 'idle');
+                  }}
+                  className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(255,79,112,0.2)] border border-[#ff4f70] text-[#ff8fa3] text-[10px] font-bold"
+                >
+                  ⏹ Stop
+                </button>
+              ) : (
+                <button
+                  onClick={() => sendChunkNowRef.current?.()}
+                  className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(0,245,160,0.18)] border border-[#00f5a0] text-[#00f5a0] text-[10px] font-bold"
+                >
+                  📤 Send
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Live Real-Time Mic Audio Meter Bar so user visibly sees their voice level! */}
@@ -1416,13 +1431,15 @@ export const App: React.FC = () => {
           onToggleMenu={() => {
             audio.ensureCtx();
             audio.tick(0.6);
+            setMenuTab('apps');
             setMenuOpen((prev) => !prev);
           }}
           onToggleMic={toggleMic}
           onOpenJarvis={() => {
             audio.ensureCtx();
             audio.tick(0.6);
-            setJarvisOpen(true);
+            setMenuTab('phone');
+            setMenuOpen(true);
           }}
           onOpenTrading={() => {
             audio.ensureCtx();
@@ -1487,6 +1504,16 @@ export const App: React.FC = () => {
           {/* Slide-up Menu Drawer */}
           <MenuSheet
             isOpen={menuOpen}
+            initialTab={menuTab}
+            onSpeakCustomText={(txt) => {
+              setQuietMode(false);
+              quietModeRef.current = false;
+              speak(txt);
+            }}
+            onSendCommand={(cmd) => {
+              cancelAllSpeech();
+              handleUtterance(cmd);
+            }}
             currentMood={mood}
             onSelectMood={(m) => {
               activeSentimentRef.current = null;

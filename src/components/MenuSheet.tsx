@@ -1,5 +1,6 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { CharacterConfig, MoodType, ThemeConfig } from '../types';
+import { executePhoneAction } from '../engine/phoneBridge';
 
 interface MenuSheetProps {
   isOpen: boolean;
@@ -27,6 +28,9 @@ interface MenuSheetProps {
   onOpenTradingBot?: () => void;
   onOpenAgentCompany?: () => void;
   onOpenElevenLabs?: () => void;
+  onSpeakCustomText?: (text: string) => void;
+  onSendCommand?: (text: string) => void;
+  initialTab?: 'apps' | 'phone' | 'voice' | 'moods' | 'settings';
   langMode: string;
   onToggleLang: () => void;
   themes: ThemeConfig[];
@@ -67,6 +71,9 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
   onOpenTradingBot,
   onOpenAgentCompany,
   onOpenElevenLabs,
+  onSpeakCustomText,
+  onSendCommand,
+  initialTab,
   langMode,
   onToggleLang,
   themes,
@@ -81,7 +88,41 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
   onClose,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<'apps' | 'moods' | 'settings'>('apps');
+  const [activeTab, setActiveTab] = useState<'apps' | 'phone' | 'voice' | 'moods' | 'settings'>(initialTab || 'apps');
+  const [ttsInput, setTtsInput] = useState('Namaste Boss! Main APEX bol raha hoon, sab systems online hain.');
+  const [sttText, setSttText] = useState('');
+  const [sttListening, setSttListening] = useState(false);
+  const sttRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (initialTab) setActiveTab(initialTab);
+  }, [initialTab, isOpen]);
+
+  const toggleMenuStt = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (sttListening) {
+      try { sttRef.current?.stop(); } catch {}
+      setSttListening(false);
+      return;
+    }
+    if (!SR) return;
+    try {
+      const rec = new SR();
+      rec.lang = 'hi-IN';
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onstart = () => setSttListening(true);
+      rec.onresult = (ev: any) => {
+        let out = '';
+        for (let i = 0; i < ev.results.length; i++) out += ev.results[i][0].transcript + ' ';
+        setSttText(out.trim());
+      };
+      rec.onerror = () => setSttListening(false);
+      rec.onend = () => setSttListening(false);
+      sttRef.current = rec;
+      rec.start();
+    } catch {}
+  };
 
   if (!isOpen) return null;
 
@@ -115,37 +156,26 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
 
       {/* Top Header & Tab Switcher (Decluttered, modern navigation) */}
       <div className="flex items-center justify-between px-3.5 pt-3 pb-2.5 border-b border-[rgba(79,210,255,0.12)] bg-[rgba(4,10,16,0.6)]">
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[rgba(10,22,34,0.7)] border border-[rgba(79,210,255,0.12)]">
-          <button
-            onClick={() => setActiveTab('apps')}
-            className={`cursor-pointer px-3 py-1.5 rounded-lg text-[10.5px] font-mono tracking-wider uppercase transition-all duration-150 ${
-              activeTab === 'apps'
-                ? 'bg-[var(--cyan,#4fd2ff)] text-[#06121c] font-bold shadow-[0_0_12px_rgba(79,210,255,0.5)]'
-                : 'text-[#7da5bf] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.06)]'
-            }`}
-          >
-            🚀 Apps
-          </button>
-          <button
-            onClick={() => setActiveTab('moods')}
-            className={`cursor-pointer px-3 py-1.5 rounded-lg text-[10.5px] font-mono tracking-wider uppercase transition-all duration-150 ${
-              activeTab === 'moods'
-                ? 'bg-[var(--cyan,#4fd2ff)] text-[#06121c] font-bold shadow-[0_0_12px_rgba(79,210,255,0.5)]'
-                : 'text-[#7da5bf] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.06)]'
-            }`}
-          >
-            🎭 Moods
-          </button>
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`cursor-pointer px-3 py-1.5 rounded-lg text-[10.5px] font-mono tracking-wider uppercase transition-all duration-150 ${
-              activeTab === 'settings'
-                ? 'bg-[var(--cyan,#4fd2ff)] text-[#06121c] font-bold shadow-[0_0_12px_rgba(79,210,255,0.5)]'
-                : 'text-[#7da5bf] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.06)]'
-            }`}
-          >
-            ⚙️ System
-          </button>
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-[rgba(10,22,34,0.7)] border border-[rgba(79,210,255,0.12)] overflow-x-auto">
+          {[
+            { id: 'apps' as const, label: '🚀 Apps' },
+            { id: 'phone' as const, label: '📱 Phone' },
+            { id: 'voice' as const, label: '🎙️ STT/TTS' },
+            { id: 'moods' as const, label: '🎭 Moods' },
+            { id: 'settings' as const, label: '⚙️ System' },
+          ].map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setActiveTab(t.id)}
+              className={`cursor-pointer px-2.5 py-1.5 rounded-lg text-[10px] font-mono tracking-wider uppercase whitespace-nowrap transition-all duration-150 ${
+                activeTab === t.id
+                  ? 'bg-[var(--cyan,#4fd2ff)] text-[#06121c] font-bold shadow-[0_0_12px_rgba(79,210,255,0.5)]'
+                  : 'text-[#7da5bf] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.06)]'
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
         </div>
 
         <button
@@ -156,6 +186,103 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
           ✕
         </button>
       </div>
+
+      {/* Embedded Phone Control Drawer right inside APEX 3D Screen */}
+      {activeTab === 'phone' && (
+        <div className="p-3.5 space-y-2.5 max-h-[55vh] overflow-y-auto">
+          <div className="text-[11px] font-mono text-[#7fd8ff]">
+            📱 Direct Android App, Alarm &amp; System Control (Speak or Tap):
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {[
+              { label: '💬 WhatsApp', run: () => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' }) },
+              { label: '📸 Instagram', run: () => executePhoneAction('LAUNCH_APP', { app: 'instagram' }) },
+              { label: '▶️ YouTube', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
+              { label: '⏰ 7:00 AM Alarm', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'APEX Alarm' }) },
+              { label: '⏲️ 5m Timer', run: () => executePhoneAction('SET_TIMER', { seconds: 300, text: 'APEX Timer' }) },
+              { label: '✈️ Telegram', run: () => executePhoneAction('LAUNCH_APP', { app: 'telegram' }) },
+              { label: '🗺️ Maps', run: () => executePhoneAction('LAUNCH_APP', { app: 'maps' }) },
+              { label: '⚙️ Wi-Fi Settings', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
+            ].map((item) => (
+              <button
+                key={item.label}
+                onClick={item.run}
+                className="cursor-pointer p-2.5 rounded-xl bg-[rgba(10,24,38,0.85)] hover:bg-[rgba(79,210,255,0.16)] border border-[rgba(79,210,255,0.24)] text-xs font-semibold text-[#e6f6ff] text-center transition-all"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Embedded Live Speech-to-Text (STT) & Text-to-Speech (TTS) Drawer right inside APEX 3D Screen */}
+      {activeTab === 'voice' && (
+        <div className="p-3.5 space-y-3 max-h-[55vh] overflow-y-auto">
+          <div className="p-3 rounded-xl bg-[rgba(10,24,38,0.85)] border border-[rgba(79,210,255,0.22)] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#e6f6ff]">🎤 Live Speech-to-Text (STT)</span>
+              <button
+                onClick={toggleMenuStt}
+                className={`cursor-pointer px-3 py-1 rounded-lg text-[10.5px] font-bold ${
+                  sttListening ? 'bg-[#ff4f70] text-white' : 'bg-[#00f5a0] text-[#041a12]'
+                }`}
+              >
+                {sttListening ? '⏹ Stop Mic' : '🎤 Start Live STT'}
+              </button>
+            </div>
+            <textarea
+              rows={2}
+              value={sttText}
+              onChange={(e) => setSttText(e.target.value)}
+              placeholder="Boliye — aapki aawaz live text me yahan aayegi..."
+              className="w-full rounded-lg bg-[#05101a] border border-[rgba(79,210,255,0.2)] p-2 text-xs text-white outline-none resize-none"
+            />
+            {sttText && onSendCommand && (
+              <button
+                onClick={() => {
+                  onSendCommand(sttText);
+                  onClose();
+                }}
+                className="cursor-pointer px-3 py-1.5 rounded-lg bg-[#4fd2ff] text-[#041a12] text-xs font-bold"
+              >
+                ➤ Ask APEX This
+              </button>
+            )}
+          </div>
+
+          <div className="p-3 rounded-xl bg-[rgba(10,24,38,0.85)] border border-[rgba(79,210,255,0.22)] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-[#e6f6ff]">🔊 Text-to-Speech (APEX 3D Voice)</span>
+              <div className="flex gap-1.5">
+                {onOpenElevenLabs && (
+                  <button
+                    onClick={onOpenElevenLabs}
+                    className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(168,85,247,0.25)] border border-[#c084fc] text-[#f3e8ff] text-[10px] font-bold"
+                  >
+                    🎙️ ElevenLabs Key/Voices
+                  </button>
+                )}
+                {onSpeakCustomText && (
+                  <button
+                    onClick={() => onSpeakCustomText(ttsInput)}
+                    className="cursor-pointer px-3 py-1 rounded-lg bg-[#4fd2ff] text-[#041a12] text-[10.5px] font-bold"
+                  >
+                    🔊 Speak Now
+                  </button>
+                )}
+              </div>
+            </div>
+            <textarea
+              rows={2}
+              value={ttsInput}
+              onChange={(e) => setTtsInput(e.target.value)}
+              placeholder="Jo likhenge APEX turant lip-sync ke saath bolega..."
+              className="w-full rounded-lg bg-[#05101a] border border-[rgba(79,210,255,0.2)] p-2 text-xs text-white outline-none resize-none"
+            />
+          </div>
+        </div>
+      )}
 
       {/* Tab 1: Studio Apps & Autotrading */}
       {activeTab === 'apps' && (
