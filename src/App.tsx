@@ -108,6 +108,11 @@ export const App: React.FC = () => {
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
   const [jarvisOpen, setJarvisOpen] = useState<boolean>(true);
+  const [hologramOverlayMode, setHologramOverlayMode] = useState<boolean>(false);
+  const [autoContinuousMode, setAutoContinuousMode] = useState<boolean>(false);
+  const autoContinuousRef = useRef<boolean>(false);
+  autoContinuousRef.current = autoContinuousMode;
+  const echoCooldownUntilRef = useRef<number>(0);
   const [quietMode, setQuietMode] = useState<boolean>(false);
   const quietModeRef = useRef<boolean>(false);
   quietModeRef.current = quietMode;
@@ -656,11 +661,28 @@ export const App: React.FC = () => {
     setIsListening(true);
     setLiveVoiceStage('listening');
     setMood('listening');
-    toast('📞 Live Call Connected — ab normal aawaz me boliye!', 3200);
+    audio.mood('listening');
 
-    // Pure single-owner 16kHz PCM WAV capture -> Single-roundtrip /voice-turn (ZERO Android SpeechRecognition conflict!)
+    const releaseMicHardware = () => {
+      sendChunkNowRef.current = null;
+      setMicLevel(0);
+      if (micStreamRef.current) {
+        try {
+          micStreamRef.current.getTracks().forEach((track) => track.stop());
+        } catch {}
+        micStreamRef.current = null;
+      }
+      audio.disconnectMicStream();
+      setIsListening(false);
+    };
+
+    // Pure LiveKit-grade 16kHz PCM WAV capture with Adaptive Noise-Floor + 900ms Speaker Echo Lockout
     const flushNow = await audio.startLivePcmCapture(stream, {
-      isMutedGate: () => liveSpeakingRef.current || busyRef.current || !poweredOnRef.current,
+      isMutedGate: () =>
+        liveSpeakingRef.current ||
+        busyRef.current ||
+        !poweredOnRef.current ||
+        Date.now() < echoCooldownUntilRef.current,
       onLevel: (lvl) => setMicLevel(lvl),
       onUtteranceWav: async (wavBuf) => {
         if (!poweredOnRef.current || !micStreamRef.current || busyRef.current) return;
@@ -668,11 +690,16 @@ export const App: React.FC = () => {
         setLiveVoiceStage('thinking');
         setMood('thinking');
 
+        // In default Single-Turn mode ('TAP TO SPEAK'), release mic immediately so it NEVER loops on its own!
+        if (!autoContinuousRef.current) {
+          releaseMicHardware();
+        }
+
         // Safety watchdog: never allow busyRef to stay stuck if mobile data drops
         const watchdog = setTimeout(() => {
           busyRef.current = false;
           liveSpeakingRef.current = false;
-          if (micStreamRef.current) setLiveVoiceStage('listening');
+          setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
         }, 14000);
 
         try {
@@ -697,16 +724,13 @@ export const App: React.FC = () => {
 
           if (!j?.ok || j?.empty || !j?.heard) {
             busyRef.current = false;
-            if (micStreamRef.current) {
-              setLiveVoiceStage('listening');
-              setMood('listening');
-            }
+            setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+            setMood(micStreamRef.current ? 'listening' : 'idle');
             return;
           }
 
           setLiveUserText(j.heard);
           setLiveBotText(j.reply);
-          toast(`🎤 "${j.heard}"`, 2600);
 
           if (j.action === 'ADD_TASK' && j.payload) addJarvisTask(j.payload);
           if (j.action === 'ADD_MEMORY' && j.payload) addJarvisMemory(j.payload);
@@ -736,7 +760,7 @@ export const App: React.FC = () => {
           while (chatMemRef.current.length > 8) chatMemRef.current.shift();
 
           // Play pre-synthesized HD voice immediately over WebAudio -> ZERO extra network wait!
-          if (j.audioBase64) {
+          if (j.audioBase64 && !quietModeRef.current) {
             const binStr = atob(j.audioBase64);
             const raw = new Uint8Array(binStr.length);
             for (let i = 0; i < binStr.length; i++) raw[i] = binStr.charCodeAt(i);
@@ -749,42 +773,34 @@ export const App: React.FC = () => {
                 if (engineRef.current) engineRef.current.voiceTarget = 1.0;
               },
               () => {
+                echoCooldownUntilRef.current = Date.now() + 900;
                 liveSpeakingRef.current = false;
                 busyRef.current = false;
                 if (engineRef.current) engineRef.current.voiceTarget = 0.12;
-                if (micStreamRef.current && poweredOnRef.current) {
-                  setLiveVoiceStage('listening');
-                  setMood('listening');
-                }
+                setLiveVoiceStage(micStreamRef.current && poweredOnRef.current ? 'listening' : 'idle');
+                setMood(micStreamRef.current && poweredOnRef.current ? 'listening' : 'idle');
               }
             );
             if (ok) return;
           }
 
-          // Fallback TTS if audioBase64 empty
+          // Direct ElevenLabs / Fallback TTS
           speak(j.reply, () => {
+            echoCooldownUntilRef.current = Date.now() + 900;
             busyRef.current = false;
           });
         } catch (err) {
           clearTimeout(watchdog);
           busyRef.current = false;
           liveSpeakingRef.current = false;
-          if (micStreamRef.current) {
-            setLiveVoiceStage('listening');
-            setMood('listening');
-          }
+          setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+          setMood(micStreamRef.current ? 'listening' : 'idle');
         }
       },
     });
 
     sendChunkNowRef.current = flushNow;
-    speak('Haan dost, bolo! Main sun raha hoon.', () => {
-      busyRef.current = false;
-      liveSpeakingRef.current = false;
-      setLiveVoiceStage('listening');
-      setMood('listening');
-    });
-  }, [toast, setMood, speak]);
+  }, [toast, setMood, speak, addJarvisTask, addJarvisMemory]);
 
   const stopEars = useCallback(() => {
     clearInterval(vadTimerRef.current);
@@ -1265,7 +1281,7 @@ export const App: React.FC = () => {
       {/* Pure pitch-black screen when FULL OFF */}
       {entered && !poweredOn && <div data-testid="power-off-blackout" className="fixed inset-0 z-30 bg-black" />}
 
-      {entered && poweredOn && (
+      {entered && poweredOn && !jarvisOpen && (
         <>
           {/* Cyberpunk Vignette & Floor Glow */}
           <div className="veil" />
@@ -1295,8 +1311,8 @@ export const App: React.FC = () => {
         </>
       )}
 
-      {/* Floating Live 2-Way Voice Call Bar when Live Voice is Active */}
-      {entered && poweredOn && isListening && (
+      {/* Floating Live 2-Way Voice Call Bar when Live Voice is Active in legacy 3D view */}
+      {entered && poweredOn && !jarvisOpen && isListening && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(86px+env(safe-area-inset-bottom))] z-30 w-[92vw] max-w-md px-3.5 py-2.5 rounded-2xl bg-[rgba(4,14,22,0.88)] border border-[rgba(0,245,160,0.45)] backdrop-blur-xl shadow-[0_12px_36px_rgba(0,0,0,0.85)] flex flex-col gap-1.5 font-mono">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs font-bold">
@@ -1421,8 +1437,12 @@ export const App: React.FC = () => {
       {entered && poweredOn && (
         <JarvisWorkspace
           isOpen={jarvisOpen && !tradingBotOpen && !youtubeOpen && !reelOpen && !agentCompanyOpen && !elevenOpen}
+          hologramOverlayMode={hologramOverlayMode}
+          onToggleHologramMode={() => setHologramOverlayMode((v) => !v)}
           onCloseTo3D={() => setJarvisOpen(false)}
           isListening={isListening}
+          autoContinuousMode={autoContinuousMode}
+          onToggleContinuousMode={() => setAutoContinuousMode((v) => !v)}
           voiceStage={liveVoiceStage}
           micLevel={micLevel}
           userText={liveUserText}
@@ -1430,6 +1450,16 @@ export const App: React.FC = () => {
           quietMode={quietMode}
           onToggleQuietMode={() => setQuietMode((v) => !v)}
           onToggleCall={toggleMic}
+          onStopSpeaking={() => {
+            echoCooldownUntilRef.current = Date.now() + 900;
+            cancelAllSpeech();
+            setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+          }}
+          onSpeakCustomText={(txt) => {
+            setQuietMode(false);
+            quietModeRef.current = false;
+            speak(txt);
+          }}
           onFlushSpeechNow={() => sendChunkNowRef.current?.()}
           onSendTextCommand={(cmd) => {
             cancelAllSpeech();

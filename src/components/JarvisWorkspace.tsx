@@ -1,5 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { executePhoneAction } from '../engine/phoneBridge';
+import {
+  ELEVEN_VOICE_PRESETS,
+  ElevenLabsConfig,
+  cleanElevenKey,
+  loadElevenConfig,
+  saveElevenConfig,
+  testAndVerifyElevenKey,
+} from '../engine/elevenlabs';
+import { audio } from '../engine/audio';
 
 export interface JarvisTaskItem {
   id: string;
@@ -16,8 +25,12 @@ export interface JarvisMemoryItem {
 
 interface JarvisWorkspaceProps {
   isOpen: boolean;
-  onCloseTo3D: () => void;
+  hologramOverlayMode?: boolean;
+  onToggleHologramMode?: () => void;
+  onCloseTo3D?: () => void;
   isListening: boolean;
+  autoContinuousMode?: boolean;
+  onToggleContinuousMode?: () => void;
   voiceStage: 'idle' | 'listening' | 'thinking' | 'speaking';
   micLevel: number;
   userText: string;
@@ -25,14 +38,16 @@ interface JarvisWorkspaceProps {
   quietMode: boolean;
   onToggleQuietMode: () => void;
   onToggleCall: () => void;
-  onFlushSpeechNow: () => void;
-  onSendTextCommand: (cmd: string) => void;
+  onStopSpeaking?: () => void;
+  onSpeakCustomText?: (text: string) => void;
+  onFlushSpeechNow?: () => void;
+  onSendTextCommand: (text: string) => void;
   tasks: JarvisTaskItem[];
   onAddTask: (title: string) => void;
   onToggleTask: (id: string) => void;
   onDeleteTask: (id: string) => void;
   memories: JarvisMemoryItem[];
-  onAddMemory: (text: string) => void;
+  onAddMemory: (fact: string) => void;
   onDeleteMemory: (id: string) => void;
   onOpenTradingBot: () => void;
   onOpenYouTubeStudio: () => void;
@@ -42,8 +57,11 @@ interface JarvisWorkspaceProps {
 
 export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   isOpen,
-  onCloseTo3D,
+  hologramOverlayMode = false,
+  onToggleHologramMode,
   isListening,
+  autoContinuousMode = false,
+  onToggleContinuousMode,
   voiceStage,
   micLevel,
   userText,
@@ -51,6 +69,8 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   quietMode,
   onToggleQuietMode,
   onToggleCall,
+  onStopSpeaking,
+  onSpeakCustomText,
   onFlushSpeechNow,
   onSendTextCommand,
   tasks,
@@ -62,491 +82,690 @@ export const JarvisWorkspace: React.FC<JarvisWorkspaceProps> = ({
   onDeleteMemory,
   onOpenTradingBot,
   onOpenYouTubeStudio,
-  onOpenElevenLabs,
   onPowerOff,
 }) => {
-  const [activeTab, setActiveTab] = useState<'home' | 'apps' | 'tasks' | 'memory' | 'skills'>('home');
+  const [activeTab, setActiveTab] = useState<'core' | 'voice' | 'control'>('core');
   const [cmdInput, setCmdInput] = useState('');
-  const [newTaskInput, setNewTaskInput] = useState('');
-  const [newMemInput, setNewMemInput] = useState('');
-  const [clock, setClock] = useState(() => new Date());
+  const [newTask, setNewTask] = useState('');
+  const [newMem, setNewMem] = useState('');
+
+  // Dedicated Speech-to-Text (STT) & Text-to-Speech (TTS) Studio states
+  const [ttsText, setTtsText] = useState(
+    'Good evening Sir. All J.A.R.V.I.S. voice, phone control, and trading systems are online.'
+  );
+  const [sttLiveTranscript, setSttLiveTranscript] = useState('');
+  const [sttDictating, setSttDictating] = useState(false);
+  const sttRecRef = useRef<any>(null);
+
+  // Embedded ElevenLabs HD Voice state
+  const initEl = loadElevenConfig();
+  const [elKey, setElKey] = useState(initEl.apiKey);
+  const [elVoiceId, setElVoiceId] = useState(initEl.voiceId);
+  const [elModel, setElModel] = useState<'eleven_flash_v2_5' | 'eleven_multilingual_v2'>(initEl.modelId);
+  const [elStatus, setElStatus] = useState(
+    initEl.apiKey ? 'ElevenLabs Studio HD Active' : 'Cloud Neural Hindi/English HD Active (Free · Zero Key)'
+  );
+  const [elBusy, setElBusy] = useState(false);
 
   useEffect(() => {
-    if (!isOpen) return;
-    const t = setInterval(() => setClock(new Date()), 1000);
-    return () => clearInterval(t);
-  }, [isOpen]);
+    return () => {
+      try {
+        sttRecRef.current?.stop();
+      } catch {}
+    };
+  }, []);
 
   if (!isOpen) return null;
 
+  // Toggle standalone live Speech-to-Text dictation (fills input box OR STT pad in real time!)
+  const toggleSttDictation = (intoCommandBar = false) => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (sttDictating) {
+      try {
+        sttRecRef.current?.stop();
+      } catch {}
+      setSttDictating(false);
+      return;
+    }
+    if (!SR) {
+      // Fallback: trigger main PCM + Whisper voice turn directly
+      onToggleCall();
+      return;
+    }
+    try {
+      const rec = new SR();
+      rec.lang = 'hi-IN';
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.onstart = () => setSttDictating(true);
+      rec.onresult = (ev: any) => {
+        let full = '';
+        for (let i = 0; i < ev.results.length; i++) {
+          full += ev.results[i][0].transcript + ' ';
+        }
+        const clean = full.trim();
+        if (intoCommandBar) {
+          setCmdInput(clean);
+        } else {
+          setSttLiveTranscript(clean);
+        }
+      };
+      rec.onerror = () => setSttDictating(false);
+      rec.onend = () => setSttDictating(false);
+      sttRecRef.current = rec;
+      rec.start();
+    } catch {
+      onToggleCall();
+    }
+  };
+
+  const handleSaveElevenLabs = async () => {
+    setElBusy(true);
+    audio.ensureCtx();
+    const cleaned = cleanElevenKey(elKey);
+    const cfg: ElevenLabsConfig = {
+      apiKey: cleaned,
+      voiceId: elVoiceId.trim() || 'JBFqnCBsd6RMkjVDRZzb',
+      modelId: elModel,
+      stability: 0.42,
+      similarityBoost: 0.78,
+    };
+    saveElevenConfig(cfg);
+    if (!cleaned) {
+      setElStatus('Cloud Neural Hindi/English HD Active (Free Mode)');
+      setElBusy(false);
+      return;
+    }
+    const res = await testAndVerifyElevenKey(cleaned, cfg.voiceId);
+    setElStatus(res.message);
+    if (res.ok && res.audio) {
+      await audio.playVoiceArrayBuffer(res.audio);
+    }
+    setElBusy(false);
+  };
+
+  const statusText =
+    voiceStage === 'speaking'
+      ? 'SPEAKING'
+      : voiceStage === 'thinking'
+      ? 'PROCESSING'
+      : isListening
+      ? 'LISTENING'
+      : 'STANDING BY';
+
+  const statusDot =
+    voiceStage === 'speaking'
+      ? 'bg-[#38bdf8] shadow-[0_0_10px_#38bdf8]'
+      : voiceStage === 'thinking'
+      ? 'bg-[#f59e0b] shadow-[0_0_10px_#f59e0b]'
+      : isListening
+      ? 'bg-[#10b981] shadow-[0_0_10px_#10b981]'
+      : 'bg-[#94a3b8]';
+
   const orbScale =
     voiceStage === 'speaking'
-      ? 1.09
+      ? 1.07
       : isListening
-      ? 1 + Math.min(0.24, micLevel * 0.42)
-      : 1.0;
-
-  const statusLabel = !isListening
-    ? 'standing by'
-    : voiceStage === 'speaking'
-    ? 'speaking'
-    : voiceStage === 'thinking'
-    ? 'thinking…'
-    : 'listening';
-
-  const statusDotColor = !isListening
-    ? '#9ca3af'
-    : voiceStage === 'speaking'
-    ? '#60a5fa'
-    : voiceStage === 'thinking'
-    ? '#fbbf24'
-    : '#34d399';
-
-  const navItems: { id: 'home' | 'apps' | 'tasks' | 'memory' | 'skills'; icon: string; label: string; badge?: number }[] = [
-    { id: 'home', icon: '◉', label: 'Home' },
-    { id: 'apps', icon: '📱', label: 'Phone Apps' },
-    { id: 'tasks', icon: '☑', label: 'Tasks', badge: tasks.filter((t) => !t.done).length || undefined },
-    { id: 'memory', icon: '🧠', label: 'Memory', badge: memories.length || undefined },
-    { id: 'skills', icon: '⚡', label: 'Skills' },
-  ];
+      ? 1 + Math.min(0.14, micLevel * 0.2)
+      : 1;
 
   return (
-    <div className="fixed inset-0 z-40 bg-[#05070a] text-[#e5e9f0] flex flex-col md:flex-row font-sans select-none overflow-hidden">
-      {/* Left Sidebar (Desktop) / Top Compact Nav (Mobile) — Izem / APEX OS Aesthetic */}
-      <aside className="w-full md:w-56 bg-[#080b10] border-b md:border-b-0 md:border-r border-[rgba(255,255,255,0.08)] flex flex-col justify-between px-3 py-2.5 md:p-4 shrink-0">
-        <div className="space-y-3">
-          {/* Top Brand + Power + 3D Switch */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-white shadow-[0_0_10px_#fff]" />
-              <span className="text-xs font-bold tracking-[0.2em] uppercase text-white">APEX OS</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={onCloseTo3D}
-                className="px-2 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.12)] border border-[rgba(255,255,255,0.12)] text-[10px] font-semibold text-[#cbd5e1] cursor-pointer"
-                title="Switch to 3D Particle Avatar"
-              >
-                🧬 3D View
-              </button>
-              <button
-                onClick={onPowerOff}
-                className="px-2 py-1 rounded-lg bg-[rgba(239,68,68,0.14)] hover:bg-[rgba(239,68,68,0.25)] border border-[rgba(239,68,68,0.35)] text-[10px] font-bold text-[#fca5a5] cursor-pointer"
-                title="Master Full Power OFF"
-              >
-                ⏻ OFF
-              </button>
-            </div>
+    <div
+      className={`fixed inset-0 z-40 flex flex-col font-sans select-none overflow-hidden transition-colors duration-300 ${
+        hologramOverlayMode
+          ? 'bg-[rgba(4,7,12,0.34)] pointer-events-none'
+          : 'bg-[#04060a] text-[#e2e8f0]'
+      }`}
+    >
+      {/* ==================== TOP EXECUTIVE PRECISION HEADER ==================== */}
+      <header className="pointer-events-auto h-14 px-4 flex items-center justify-between border-b border-[rgba(255,255,255,0.07)] bg-[rgba(5,8,13,0.88)] backdrop-blur-xl shrink-0">
+        <div className="flex items-center gap-2.5">
+          <span className="w-2 h-2 rounded-full bg-[#38bdf8] shadow-[0_0_12px_#38bdf8]" />
+          <div className="flex flex-col">
+            <span className="text-[12px] font-bold tracking-[0.26em] text-white leading-none">
+              J.A.R.V.I.S.
+            </span>
+            <span className="text-[9px] font-mono tracking-[0.16em] text-[#64748b] mt-0.5">
+              LIVEKIT VOICE OS · v3.0
+            </span>
           </div>
-
-          {/* Navigation Tabs */}
-          <nav className="flex md:flex-col gap-1 overflow-x-auto pb-0.5 md:pb-0">
-            {navItems.map((item) => {
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-xs font-medium transition-all cursor-pointer whitespace-nowrap ${
-                    active
-                      ? 'bg-[rgba(255,255,255,0.11)] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]'
-                      : 'text-[#8b95a5] hover:text-white hover:bg-[rgba(255,255,255,0.04)]'
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="text-[11px]">{item.icon}</span>
-                    <span>{item.label}</span>
-                  </span>
-                  {item.badge ? (
-                    <span className="px-1.5 py-0.2 rounded-full text-[9.5px] bg-[rgba(255,255,255,0.14)] text-white">
-                      {item.badge}
-                    </span>
-                  ) : null}
-                </button>
-              );
-            })}
-          </nav>
         </div>
 
-        {/* Bottom Sidebar Controls — Exact "Quiet mode" toggle from @izemdesk Reel! */}
-        <div className="hidden md:flex flex-col gap-2.5 pt-3 border-t border-[rgba(255,255,255,0.07)]">
-          <button
-            onClick={onOpenTradingBot}
-            className="w-full py-2 px-3 rounded-xl bg-[rgba(255,148,77,0.12)] hover:bg-[rgba(255,148,77,0.2)] border border-[rgba(255,148,77,0.35)] text-[#ffb877] text-[11px] font-bold flex items-center justify-between cursor-pointer"
-          >
-            <span>🧡 AI Day Trader</span>
-            <span>11 Skills →</span>
-          </button>
+        <div className="flex items-center gap-2">
+          {/* Status Telemetry Pill */}
+          <div className="px-2.5 py-1 rounded-full bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.09)] flex items-center gap-1.5">
+            <span className={`w-1.5 h-1.5 rounded-full ${statusDot}`} />
+            <span className="text-[9.5px] font-mono tracking-[0.14em] text-[#cbd5e1]">
+              {statusText}
+            </span>
+          </div>
 
-          <div className="flex items-center justify-between px-1 py-1 text-xs text-[#9aa4b2]">
-            <span>Quiet mode</span>
+          {/* Inline 3D Hologram Core Toggle (Unified inside SAME OS!) */}
+          {onToggleHologramMode && activeTab === 'core' && (
             <button
-              onClick={onToggleQuietMode}
-              aria-pressed={quietMode}
-              className={`w-9 h-5 rounded-full transition-all cursor-pointer p-0.5 ${
-                quietMode ? 'bg-white' : 'bg-[#1f2633]'
+              onClick={onToggleHologramMode}
+              title="Toggle 3D Hologram / Minimal Eclipse Core"
+              className={`px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider border transition-all cursor-pointer ${
+                hologramOverlayMode
+                  ? 'bg-[rgba(56,189,248,0.2)] border-[#38bdf8] text-[#e0f2fe]'
+                  : 'bg-[rgba(255,255,255,0.04)] border-[rgba(255,255,255,0.1)] text-[#94a3b8] hover:text-white'
               }`}
             >
-              <div
-                className={`w-4 h-4 rounded-full transition-transform ${
-                  quietMode ? 'translate-x-4 bg-black' : 'translate-x-0 bg-[#9aa4b2]'
-                }`}
-              />
+              {hologramOverlayMode ? 'ORB' : '3D'}
             </button>
-          </div>
-        </div>
-      </aside>
+          )}
 
-      {/* Main Content Stage */}
-      <main className="flex-1 relative flex flex-col justify-between p-4 sm:p-6 overflow-y-auto">
-        {/* Top Bar with Status Pill (exact top-right "• standing by" look!) */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-xs text-[#7c8798] font-medium">
-            {activeTab === 'home' ? 'Voice Core' : activeTab.toUpperCase()}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={onToggleQuietMode}
-              className="md:hidden px-2.5 py-1 rounded-full bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] text-[10.5px] text-[#9aa4b2] cursor-pointer"
-            >
-              {quietMode ? '🔇 Quiet ON' : '🔊 Voice ON'}
-            </button>
-
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[rgba(255,255,255,0.05)] border border-[rgba(255,255,255,0.1)] text-[11px] text-[#d8dee9]">
-              <span
-                className="w-2 h-2 rounded-full transition-colors"
-                style={{ backgroundColor: statusDotColor, boxShadow: `0 0 10px ${statusDotColor}` }}
-              />
-              <span>{statusLabel}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* TAB 1: HOME — THE ICONIC GLOWING DARK ECLIPSE ORB */}
-        {activeTab === 'home' && (
-          <div className="flex-1 flex flex-col items-center justify-center py-6 gap-7">
-            <button
-              onClick={onToggleCall}
-              aria-label="Toggle JARVIS Live Voice"
-              className="relative group flex items-center justify-center cursor-pointer focus:outline-none"
-            >
-              {/* Soft Ambient Outer Corona */}
-              <div
-                className="w-56 h-56 sm:w-64 sm:h-64 rounded-full transition-transform duration-150"
-                style={{
-                  transform: `scale(${orbScale})`,
-                  background:
-                    voiceStage === 'speaking'
-                      ? 'radial-gradient(circle, rgba(96,165,250,0.22) 45%, rgba(255,255,255,0.03) 68%, transparent 76%)'
-                      : isListening
-                      ? 'radial-gradient(circle, rgba(52,211,153,0.18) 45%, rgba(255,255,255,0.03) 68%, transparent 76%)'
-                      : 'radial-gradient(circle, rgba(255,255,255,0.08) 46%, transparent 72%)',
-                }}
-              />
-
-              {/* Luminous Thin Eclipse Ring + Pitch-Dark Sphere Inside (Exact Izem Look!) */}
-              <div
-                className="absolute w-40 h-40 sm:w-48 sm:h-48 rounded-full transition-transform duration-100 flex items-center justify-center"
-                style={{
-                  transform: `scale(${orbScale})`,
-                  background: 'radial-gradient(circle at 32% 28%, #1a1f29 0%, #07090d 58%, #020305 100%)',
-                  boxShadow:
-                    voiceStage === 'speaking'
-                      ? '0 0 38px rgba(147,197,253,0.65), inset -6px -6px 22px rgba(255,255,255,0.28), 0 0 2px 1.5px rgba(255,255,255,0.88)'
-                      : isListening
-                      ? '0 0 34px rgba(110,231,183,0.5), inset -5px -5px 18px rgba(255,255,255,0.22), 0 0 2px 1.5px rgba(255,255,255,0.82)'
-                      : '0 0 28px rgba(255,255,255,0.16), inset -4px -5px 16px rgba(255,255,255,0.16), 0 0 1.5px 1.2px rgba(255,255,255,0.68)',
-                }}
-              >
-                <span className="text-[10.5px] tracking-[0.22em] uppercase text-[rgba(255,255,255,0.5)] group-hover:text-white transition-colors">
-                  {isListening ? 'TAP TO END' : 'TAP TO TALK'}
-                </span>
-              </div>
-            </button>
-
-            {/* Live Subtitles & Instant Send Trigger */}
-            <div className="w-full max-w-lg text-center space-y-2 min-h-[64px] px-2">
-              {userText && (
-                <div className="text-xs text-[#94a3b8]">
-                  You: <span className="text-white">"{userText}"</span>
-                </div>
-              )}
-              <div className="text-sm sm:text-base text-[#f1f5f9] font-normal leading-relaxed">
-                {botText || 'Tap the orb & speak — "WhatsApp kholo", "Instagram kholo", "Subah 7 baje alarm lagao", or talk naturally!'}
-              </div>
-
-              {/* 1-Tap Quick Phone Actions Bar right on Home */}
-              <div className="flex flex-wrap items-center justify-center gap-1.5 pt-2">
-                {onOpenElevenLabs && (
-                  <button
-                    onClick={onOpenElevenLabs}
-                    className="px-2.5 py-1 rounded-full bg-[rgba(168,85,247,0.2)] border border-[rgba(192,132,252,0.55)] text-[#e9d5ff] text-[10.5px] font-bold cursor-pointer"
-                  >
-                    🎙️ ElevenLabs HD Voice
-                  </button>
-                )}
-                <button
-                  onClick={onOpenTradingBot}
-                  className="px-2.5 py-1 rounded-full bg-[rgba(255,148,77,0.16)] border border-[rgba(255,148,77,0.45)] text-[#ffc288] text-[10.5px] font-bold cursor-pointer"
-                >
-                  🧡 990-Chart AI Trader
-                </button>
-                <button
-                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' })}
-                  className="px-2.5 py-1 rounded-full bg-[rgba(34,197,94,0.14)] border border-[rgba(34,197,94,0.4)] text-[#86efac] text-[10.5px] font-semibold cursor-pointer"
-                >
-                  💬 WhatsApp
-                </button>
-                <button
-                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'instagram' })}
-                  className="px-2.5 py-1 rounded-full bg-[rgba(236,72,153,0.14)] border border-[rgba(236,72,153,0.4)] text-[#f9a8d4] text-[10.5px] font-semibold cursor-pointer"
-                >
-                  📸 Instagram
-                </button>
-                <button
-                  onClick={() => executePhoneAction('LAUNCH_APP', { app: 'youtube' })}
-                  className="px-2.5 py-1 rounded-full bg-[rgba(239,68,68,0.14)] border border-[rgba(239,68,68,0.4)] text-[#fca5a5] text-[10.5px] font-semibold cursor-pointer"
-                >
-                  ▶️ YouTube
-                </button>
-              </div>
-
-              {isListening && voiceStage === 'listening' && (
-                <button
-                  onClick={onFlushSpeechNow}
-                  className="mt-1 px-3 py-1 rounded-full bg-[rgba(52,211,153,0.14)] border border-[rgba(52,211,153,0.4)] text-[#6ee7b7] text-[10.5px] font-semibold cursor-pointer"
-                >
-                  📤 Send Spoken Audio Now
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: ANDROID PHONE APPS, CALL & ALARM LAUNCHER */}
-        {activeTab === 'apps' && (
-          <div className="flex-1 max-w-2xl w-full mx-auto py-3 space-y-3">
-            <div className="p-3.5 rounded-2xl bg-[#0b0f17] border border-[rgba(255,255,255,0.09)] flex items-center justify-between">
-              <div>
-                <div className="text-base font-bold text-white">📱 Android Voice App &amp; System Control</div>
-                <div className="text-[11px] text-[#94a3b8]">
-                  Bol kar ya tap karke kholein: "WhatsApp kholo", "Instagram kholo", "Subah 6:30 ka alarm lagao", "Call 98765…"
-                </div>
-              </div>
-              <div className="text-right text-xs text-[#cbd5e1] font-mono">
-                {clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              {[
-                { label: '💬 WhatsApp', run: () => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' }) },
-                { label: '📸 Instagram', run: () => executePhoneAction('LAUNCH_APP', { app: 'instagram' }) },
-                { label: '▶️ YouTube App', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
-                { label: '⏰ Set 7:00 AM Alarm', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'APEX Morning Alarm' }) },
-                { label: '✈️ Telegram', run: () => executePhoneAction('LAUNCH_APP', { app: 'telegram' }) },
-                { label: '🗺️ Google Maps', run: () => executePhoneAction('LAUNCH_APP', { app: 'maps' }) },
-                { label: '🎵 Spotify', run: () => executePhoneAction('LAUNCH_APP', { app: 'spotify' }) },
-                { label: '⚙️ Wi-Fi Settings', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
-              ].map((b) => (
-                <button
-                  key={b.label}
-                  onClick={b.run}
-                  className="p-3.5 rounded-2xl bg-[#0b0f17] hover:bg-[#141b29] border border-[rgba(255,255,255,0.1)] text-xs font-semibold text-white text-center cursor-pointer transition-all"
-                >
-                  {b.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-              <button
-                onClick={onOpenTradingBot}
-                className="py-3 px-4 rounded-2xl bg-[rgba(255,148,77,0.14)] border border-[rgba(255,148,77,0.45)] text-[#ffc288] text-xs font-extrabold text-left cursor-pointer"
-              >
-                🧡 Open 990-Chart AI Day Trader (CoinDCX) →
-              </button>
-              <button
-                onClick={onOpenYouTubeStudio}
-                className="py-3 px-4 rounded-2xl bg-[rgba(239,68,68,0.14)] border border-[rgba(239,68,68,0.45)] text-[#fca5a5] text-xs font-extrabold text-left cursor-pointer"
-              >
-                🎬 Open Autonomous YouTube Studio →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: TASKS */}
-        {activeTab === 'tasks' && (
-          <div className="flex-1 max-w-xl w-full mx-auto py-4 space-y-3">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!newTaskInput.trim()) return;
-                onAddTask(newTaskInput.trim());
-                setNewTaskInput('');
-              }}
-              className="flex gap-2"
-            >
-              <input
-                value={newTaskInput}
-                onChange={(e) => setNewTaskInput(e.target.value)}
-                placeholder='Add a task (or say "Task add karo…")'
-                className="flex-1 bg-[#0b0f17] border border-[rgba(255,255,255,0.12)] rounded-xl px-3.5 py-2 text-xs text-white"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-xl bg-white text-black text-xs font-bold cursor-pointer"
-              >
-                + Add
-              </button>
-            </form>
-
-            <div className="space-y-2">
-              {tasks.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[#64748b]">
-                  No tasks yet. Tell JARVIS: "Task add karo sham 6 baje video post karna hai"
-                </div>
-              ) : (
-                tasks.map((t) => (
-                  <div
-                    key={t.id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-[#0b0f17] border border-[rgba(255,255,255,0.08)]"
-                  >
-                    <label className="flex items-center gap-2.5 text-xs cursor-pointer">
-                      <input type="checkbox" checked={t.done} onChange={() => onToggleTask(t.id)} />
-                      <span className={t.done ? 'line-through text-[#64748b]' : 'text-white'}>{t.title}</span>
-                    </label>
-                    <button
-                      onClick={() => onDeleteTask(t.id)}
-                      className="text-[11px] text-[#ef4444] hover:underline cursor-pointer"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 4: MEMORY */}
-        {activeTab === 'memory' && (
-          <div className="flex-1 max-w-xl w-full mx-auto py-4 space-y-3">
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!newMemInput.trim()) return;
-                onAddMemory(newMemInput.trim());
-                setNewMemInput('');
-              }}
-              className="flex gap-2"
-            >
-              <input
-                value={newMemInput}
-                onChange={(e) => setNewMemInput(e.target.value)}
-                placeholder='Save personal memory (or say "Yaad rakhna…")'
-                className="flex-1 bg-[#0b0f17] border border-[rgba(255,255,255,0.12)] rounded-xl px-3.5 py-2 text-xs text-white"
-              />
-              <button
-                type="submit"
-                className="px-4 py-2 rounded-xl bg-white text-black text-xs font-bold cursor-pointer"
-              >
-                Save
-              </button>
-            </form>
-
-            <div className="space-y-2">
-              {memories.length === 0 ? (
-                <div className="text-center py-8 text-xs text-[#64748b]">
-                  JARVIS remembers anything you tell it — try saying: "Yaad rakhna mujhe tech news pasand hai"
-                </div>
-              ) : (
-                memories.map((m) => (
-                  <div
-                    key={m.id}
-                    className="flex items-center justify-between p-3 rounded-xl bg-[#0b0f17] border border-[rgba(255,255,255,0.08)] text-xs"
-                  >
-                    <span className="text-[#e2e8f0]">🧠 {m.text}</span>
-                    <button
-                      onClick={() => onDeleteMemory(m.id)}
-                      className="text-[11px] text-[#ef4444] cursor-pointer"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: SKILLS */}
-        {activeTab === 'skills' && (
-          <div className="flex-1 max-w-2xl w-full mx-auto py-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {[
-              {
-                title: '🧡 11-Skill AI Day Trader (Separate Bot)',
-                desc: 'Scans 500+ CoinDCX charts · Plans Entry/Stop/Target · 10,000× Time-Machine Win Odds',
-                action: onOpenTradingBot,
-              },
-              {
-                title: '🎬 Autonomous YouTube Shorts Studio',
-                desc: 'Viral topic research + Hinglish script + ElevenLabs HD voice + direct YouTube upload',
-                action: onOpenYouTubeStudio,
-              },
-              {
-                title: '🌐 Live News & Web Search by Voice',
-                desc: 'Ask JARVIS "Aaj ki latest AI news batao" for instant real-time web headlines',
-                action: () => {
-                  setActiveTab('home');
-                  onSendTextCommand('Aaj ki top tech aur India news short me batao');
-                },
-              },
-              {
-                title: '🧬 3D Interactive Humanoid Engine',
-                desc: 'Switch anytime to 60fps WebGL particle avatar with camera hand-gesture tracking',
-                action: onCloseTo3D,
-              },
-            ].map((s) => (
-              <button
-                key={s.title}
-                onClick={s.action}
-                className="p-4 rounded-2xl bg-[#0b0f17] hover:bg-[#111724] border border-[rgba(255,255,255,0.1)] text-left space-y-1 transition-all cursor-pointer"
-              >
-                <div className="text-xs font-bold text-white">{s.title}</div>
-                <div className="text-[11px] text-[#94a3b8] leading-snug">{s.desc}</div>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Universal Bottom JARVIS Prompt Bar */}
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!cmdInput.trim()) return;
-            onSendTextCommand(cmdInput.trim());
-            setCmdInput('');
-          }}
-          className="w-full max-w-xl mx-auto flex items-center gap-2 pt-2"
-        >
-          <input
-            type="text"
-            value={cmdInput}
-            onChange={(e) => setCmdInput(e.target.value)}
-            placeholder="Ask JARVIS anything — tasks, memory, live news, ideas…"
-            className="flex-1 bg-[#0b0f17] border border-[rgba(255,255,255,0.12)] rounded-2xl px-4 py-2.5 text-xs text-white placeholder-[#64748b] focus:outline-none focus:border-white"
-          />
+          {/* Single Master Power OFF Button */}
           <button
-            type="submit"
-            className="px-4 py-2.5 rounded-2xl bg-white text-black text-xs font-bold hover:opacity-90 cursor-pointer"
+            onClick={onPowerOff}
+            title="Master System Shutdown"
+            className="px-2.5 py-1 rounded-full bg-[rgba(239,68,68,0.12)] hover:bg-[rgba(239,68,68,0.24)] border border-[rgba(239,68,68,0.35)] text-[#fca5a5] text-[10px] font-mono tracking-wider cursor-pointer"
           >
-            Send
+            ⏻ OFF
           </button>
-        </form>
+        </div>
+      </header>
+
+      {/* ==================== MAIN UNIFIED WORKSPACE BODY ==================== */}
+      <main className="flex-1 flex flex-col justify-between overflow-y-auto px-4 pt-3 pb-2">
+        {/* ---------- TAB 1: UNIFIED J.A.R.V.I.S. VOICE CORE ---------- */}
+        {activeTab === 'core' && (
+          <div className="flex-1 flex flex-col items-center justify-between max-w-xl w-full mx-auto py-1">
+            {/* Mode Switch Bar: Single-Turn (Zero Self-Talk!) vs LiveKit Auto + Mute Speaker */}
+            <div className="pointer-events-auto flex items-center gap-1.5 p-1 rounded-full bg-[rgba(12,17,26,0.9)] border border-[rgba(255,255,255,0.08)]">
+              <button
+                onClick={() => {
+                  if (autoContinuousMode) onToggleContinuousMode?.();
+                }}
+                className={`px-3 py-1 rounded-full text-[10px] font-mono tracking-wider transition-all cursor-pointer ${
+                  !autoContinuousMode
+                    ? 'bg-white text-[#04060a] font-bold shadow-sm'
+                    : 'text-[#94a3b8] hover:text-white'
+                }`}
+              >
+                TAP TO SPEAK
+              </button>
+              <button
+                onClick={() => {
+                  if (!autoContinuousMode) onToggleContinuousMode?.();
+                }}
+                className={`px-3 py-1 rounded-full text-[10px] font-mono tracking-wider transition-all cursor-pointer ${
+                  autoContinuousMode
+                    ? 'bg-[#38bdf8] text-[#04060a] font-bold shadow-[0_0_12px_rgba(56,189,248,0.4)]'
+                    : 'text-[#94a3b8] hover:text-white'
+                }`}
+              >
+                LIVEKIT AUTO
+              </button>
+              <button
+                onClick={onToggleQuietMode}
+                title="Mute / Unmute TTS Voice Output"
+                className={`px-2.5 py-1 rounded-full text-[10px] font-mono tracking-wider transition-all cursor-pointer ${
+                  quietMode
+                    ? 'bg-[rgba(245,158,11,0.2)] text-[#fcd34d]'
+                    : 'text-[#94a3b8] hover:text-white'
+                }`}
+              >
+                {quietMode ? 'MUTED' : 'TTS ON'}
+              </button>
+            </div>
+
+            {/* Center Stage: Either Precision Eclipse Reactor Orb OR Transparent Window to Interactive 3D Core */}
+            {hologramOverlayMode ? (
+              <div className="flex-1 flex items-end justify-center pb-3 pointer-events-none">
+                <button
+                  onClick={onToggleCall}
+                  className={`pointer-events-auto px-6 py-2.5 rounded-full font-mono text-xs tracking-[0.2em] uppercase backdrop-blur-xl border transition-all cursor-pointer ${
+                    isListening
+                      ? 'bg-[rgba(16,185,129,0.22)] border-[#10b981] text-[#a7f3d0] shadow-[0_0_24px_rgba(16,185,129,0.35)]'
+                      : 'bg-[rgba(8,13,22,0.85)] border-[rgba(56,189,248,0.45)] text-white shadow-[0_0_24px_rgba(56,189,248,0.2)]'
+                  }`}
+                >
+                  {isListening ? '● LISTENING — TAP TO SEND' : '◉ SPEAK TO J.A.R.V.I.S.'}
+                </button>
+              </div>
+            ) : (
+              <div className="my-auto flex flex-col items-center py-3 pointer-events-auto">
+                <div className="relative flex items-center justify-center">
+                  {/* Ambient Precision Halo */}
+                  <div
+                    style={{
+                      transform: `scale(${orbScale})`,
+                      boxShadow:
+                        voiceStage === 'speaking'
+                          ? '0 0 85px 16px rgba(56,189,248,0.38), inset 0 0 36px rgba(255,255,255,0.24)'
+                          : isListening
+                          ? '0 0 75px 14px rgba(16,185,129,0.34), inset 0 0 30px rgba(16,185,129,0.2)'
+                          : '0 0 60px 8px rgba(255,255,255,0.09), inset 0 0 22px rgba(56,189,248,0.14)',
+                    }}
+                    className="w-48 h-48 sm:w-56 sm:h-56 rounded-full transition-all duration-150 flex items-center justify-center border border-[rgba(255,255,255,0.2)] bg-[#060910]"
+                  >
+                    <button
+                      onClick={() => {
+                        if (voiceStage === 'speaking' && onStopSpeaking) {
+                          onStopSpeaking();
+                        } else {
+                          onToggleCall();
+                        }
+                      }}
+                      className="w-40 h-40 sm:w-48 sm:h-48 rounded-full bg-gradient-to-b from-[#0b101b] via-[#05070c] to-[#020306] border border-[rgba(255,255,255,0.12)] flex flex-col items-center justify-center gap-2.5 cursor-pointer relative overflow-hidden group"
+                    >
+                      {/* Live 17-Bar Acoustic Spectrum */}
+                      <div className="flex items-center justify-center gap-[3px] h-7">
+                        {Array.from({ length: 17 }).map((_, idx) => {
+                          const dist = Math.abs(idx - 8) / 8;
+                          const energy =
+                            voiceStage === 'speaking'
+                              ? 0.65
+                              : isListening
+                              ? Math.max(0.12, micLevel)
+                              : 0.08;
+                          const h = Math.max(3, Math.round((1 - dist * 0.68) * energy * 28));
+                          return (
+                            <span
+                              key={idx}
+                              style={{ height: `${h}px` }}
+                              className={`w-[2px] rounded-full transition-all duration-75 ${
+                                voiceStage === 'speaking'
+                                  ? 'bg-[#38bdf8]'
+                                  : isListening
+                                  ? 'bg-[#10b981]'
+                                  : 'bg-[rgba(255,255,255,0.28)]'
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      <span className="text-[10px] font-mono tracking-[0.26em] uppercase text-[#cbd5e1] group-hover:text-white">
+                        {voiceStage === 'speaking'
+                          ? 'TAP TO STOP'
+                          : isListening
+                          ? 'LISTENING'
+                          : 'TAP TO SPEAK'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Live STT & TTS Executive Telemetry Panel */}
+            <div className="pointer-events-auto w-full space-y-2.5">
+              <div className="p-3.5 rounded-2xl bg-[rgba(10,14,22,0.92)] border border-[rgba(255,255,255,0.08)] backdrop-blur-xl space-y-2">
+                {userText ? (
+                  <div className="flex items-baseline justify-between gap-2 border-b border-[rgba(255,255,255,0.06)] pb-1.5">
+                    <span className="text-[11px] font-mono text-[#64748b] shrink-0">STT · YOU</span>
+                    <p className="text-xs text-[#cbd5e1] text-right truncate flex-1">{userText}</p>
+                  </div>
+                ) : null}
+
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-0.5 flex-1">
+                    <span className="text-[9.5px] font-mono tracking-[0.16em] text-[#38bdf8] block">
+                      J.A.R.V.I.S. RESPONSE
+                    </span>
+                    <p className="text-[13.5px] text-[#f1f5f9] leading-relaxed font-normal">
+                      {botText || 'Good evening, Sir. Tap the core or type below — WhatsApp, Alarms, News, Tasks, or 990-Chart Market Intelligence.'}
+                    </p>
+                  </div>
+
+                  {/* Instant Stop OR Replay TTS Control */}
+                  <div className="flex items-center gap-1 shrink-0 pt-1">
+                    {voiceStage === 'speaking' && onStopSpeaking ? (
+                      <button
+                        onClick={onStopSpeaking}
+                        className="px-2.5 py-1 rounded-lg bg-[rgba(239,68,68,0.16)] border border-[rgba(239,68,68,0.4)] text-[#fca5a5] text-[10px] font-mono cursor-pointer"
+                      >
+                        STOP
+                      </button>
+                    ) : botText && onSpeakCustomText ? (
+                      <button
+                        onClick={() => onSpeakCustomText(botText)}
+                        title="Replay Text-to-Speech"
+                        className="px-2.5 py-1 rounded-lg bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.12)] border border-[rgba(255,255,255,0.1)] text-[#cbd5e1] text-[10px] font-mono cursor-pointer"
+                      >
+                        SPEAK
+                      </button>
+                    ) : null}
+
+                    {isListening && voiceStage === 'listening' && onFlushSpeechNow && (
+                      <button
+                        onClick={onFlushSpeechNow}
+                        className="px-2.5 py-1 rounded-lg bg-[rgba(16,185,129,0.18)] border border-[rgba(16,185,129,0.4)] text-[#6ee7b7] text-[10px] font-mono cursor-pointer"
+                      >
+                        SEND
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Unified Command + Live STT Dictation Input Bar */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const v = cmdInput.trim();
+                  if (!v) return;
+                  onSendTextCommand(v);
+                  setCmdInput('');
+                }}
+                className="flex items-center gap-2 bg-[#0a0f18] border border-[rgba(255,255,255,0.11)] rounded-2xl p-1.5"
+              >
+                <button
+                  type="button"
+                  onClick={() => toggleSttDictation(true)}
+                  title="Live Speech-to-Text Dictation"
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center text-xs font-mono shrink-0 cursor-pointer transition-all ${
+                    sttDictating
+                      ? 'bg-[#10b981] text-[#04060a] font-bold animate-pulse'
+                      : 'bg-[rgba(255,255,255,0.06)] text-[#cbd5e1] hover:bg-[rgba(255,255,255,0.12)]'
+                  }`}
+                >
+                  STT
+                </button>
+                <input
+                  value={cmdInput}
+                  onChange={(e) => setCmdInput(e.target.value)}
+                  placeholder="Command J.A.R.V.I.S. — Open WhatsApp, 7 AM alarm, news..."
+                  className="flex-1 bg-transparent px-2 py-2 text-xs sm:text-sm text-white placeholder-[#64748b] outline-none"
+                />
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-white hover:bg-[#e2e8f0] text-[#04060a] text-xs font-bold tracking-wide cursor-pointer shrink-0"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ---------- TAB 2: DEDICATED STT + TTS + ELEVENLABS VOICE STUDIO ---------- */}
+        {activeTab === 'voice' && (
+          <div className="pointer-events-auto max-w-xl w-full mx-auto space-y-3 py-1">
+            {/* 1. Speech-to-Text (Live STT) Module */}
+            <div className="p-4 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold tracking-wider uppercase text-white">
+                    Speech-to-Text (Live STT Engine)
+                  </div>
+                  <div className="text-[11px] text-[#64748b]">
+                    Real-time Hindi, Hinglish &amp; English speech transcription
+                  </div>
+                </div>
+                <button
+                  onClick={() => toggleSttDictation(false)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
+                    sttDictating
+                      ? 'bg-[#ef4444] text-white'
+                      : 'bg-[#10b981] text-[#04060a]'
+                  }`}
+                >
+                  {sttDictating ? 'Stop Mic' : 'Start Live STT'}
+                </button>
+              </div>
+              <textarea
+                rows={2}
+                value={sttLiveTranscript}
+                onChange={(e) => setSttLiveTranscript(e.target.value)}
+                placeholder="Tap 'Start Live STT' and speak — your words appear live here..."
+                className="w-full rounded-xl bg-[#05080d] border border-[rgba(255,255,255,0.08)] p-3 text-xs text-white placeholder-[#475569] outline-none resize-none"
+              />
+              {sttLiveTranscript && (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      onSendTextCommand(sttLiveTranscript);
+                      setActiveTab('core');
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-white text-[#04060a] text-[11px] font-bold cursor-pointer"
+                  >
+                    Ask J.A.R.V.I.S. This →
+                  </button>
+                  <button
+                    onClick={() => setSttLiveTranscript('')}
+                    className="px-3 py-1.5 rounded-lg bg-[rgba(255,255,255,0.06)] text-[#94a3b8] text-[11px] cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 2. Text-to-Speech (Instant TTS) Synthesizer */}
+            <div className="p-4 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-bold tracking-wider uppercase text-white">
+                    Text-to-Speech (Neural &amp; ElevenLabs TTS)
+                  </div>
+                  <div className="text-[11px] text-[#64748b]">{elStatus}</div>
+                </div>
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={() => onSpeakCustomText?.(ttsText)}
+                    className="px-3.5 py-1.5 rounded-xl bg-[#38bdf8] text-[#04060a] text-xs font-bold cursor-pointer"
+                  >
+                    Speak Text
+                  </button>
+                  {voiceStage === 'speaking' && onStopSpeaking && (
+                    <button
+                      onClick={onStopSpeaking}
+                      className="px-3 py-1.5 rounded-xl bg-[rgba(239,68,68,0.2)] text-[#fca5a5] text-xs font-bold cursor-pointer"
+                    >
+                      Stop
+                    </button>
+                  )}
+                </div>
+              </div>
+              <textarea
+                rows={2}
+                value={ttsText}
+                onChange={(e) => setTtsText(e.target.value)}
+                placeholder="Type any Hindi or English sentence to speak aloud..."
+                className="w-full rounded-xl bg-[#05080d] border border-[rgba(255,255,255,0.08)] p-3 text-xs text-white outline-none resize-none"
+              />
+            </div>
+
+            {/* 3. Integrated ElevenLabs HD Voice Configuration */}
+            <div className="p-4 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold tracking-wider uppercase text-white">
+                  ElevenLabs Studio Voice Upgrade
+                </span>
+                <a
+                  href="https://elevenlabs.io/app/settings/api-keys"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] font-mono text-[#38bdf8] underline"
+                >
+                  Get API Key →
+                </a>
+              </div>
+
+              <input
+                type="password"
+                value={elKey}
+                onChange={(e) => setElKey(e.target.value)}
+                placeholder="Paste ElevenLabs API Key (sk_... with Text-to-Speech enabled)"
+                className="w-full px-3 py-2.5 rounded-xl bg-[#05080d] border border-[rgba(255,255,255,0.1)] text-xs font-mono text-white outline-none focus:border-[#38bdf8]"
+              />
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                {ELEVEN_VOICE_PRESETS.slice(0, 8).map((v) => (
+                  <button
+                    key={v.id}
+                    onClick={() => setElVoiceId(v.id)}
+                    className={`p-2 rounded-xl text-left border cursor-pointer transition-all ${
+                      elVoiceId === v.id
+                        ? 'bg-[rgba(56,189,248,0.16)] border-[#38bdf8] text-white'
+                        : 'bg-[#05080d] border-[rgba(255,255,255,0.07)] text-[#94a3b8]'
+                    }`}
+                  >
+                    <div className="text-[11px] font-bold truncate">{v.name.replace(' (APEX Default)', '')}</div>
+                    <div className="text-[9.5px] text-[#64748b]">{v.gender}</div>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setElModel(elModel === 'eleven_flash_v2_5' ? 'eleven_multilingual_v2' : 'eleven_flash_v2_5')}
+                  className="px-3 py-2.5 rounded-xl bg-[#05080d] border border-[rgba(255,255,255,0.1)] text-[10.5px] font-mono text-[#cbd5e1] cursor-pointer"
+                >
+                  {elModel === 'eleven_flash_v2_5' ? 'Model: Flash v2.5 (Fast)' : 'Model: Multilingual v2'}
+                </button>
+                <button
+                  onClick={handleSaveElevenLabs}
+                  disabled={elBusy}
+                  className="flex-1 py-2.5 rounded-xl bg-white text-[#04060a] text-xs font-bold cursor-pointer disabled:opacity-50"
+                >
+                  {elBusy ? 'Verifying...' : 'Save & Test ElevenLabs Voice'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ---------- TAB 3: UNIFIED PHONE CONTROL, TASKS & MEMORY ---------- */}
+        {activeTab === 'control' && (
+          <div className="pointer-events-auto max-w-xl w-full mx-auto space-y-3 py-1">
+            {/* Clean Sleek Monochrome Device Launcher Grid */}
+            <div className="p-4 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-2.5">
+              <div className="text-xs font-bold tracking-wider uppercase text-white">
+                Android Device &amp; App Bridge
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { name: 'WhatsApp', sub: 'Messenger', run: () => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' }) },
+                  { name: 'Instagram', sub: 'Social', run: () => executePhoneAction('LAUNCH_APP', { app: 'instagram' }) },
+                  { name: 'YouTube', sub: 'Video', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
+                  { name: '07:00 Alarm', sub: 'System Clock', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'JARVIS Alarm' }) },
+                  { name: 'Telegram', sub: 'Comms', run: () => executePhoneAction('LAUNCH_APP', { app: 'telegram' }) },
+                  { name: 'Google Maps', sub: 'Navigation', run: () => executePhoneAction('LAUNCH_APP', { app: 'maps' }) },
+                  { name: 'Spotify', sub: 'Audio', run: () => executePhoneAction('LAUNCH_APP', { app: 'spotify' }) },
+                  { name: 'Wi-Fi Settings', sub: 'Android OS', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
+                ].map((item) => (
+                  <button
+                    key={item.name}
+                    onClick={item.run}
+                    className="p-3 rounded-xl bg-[#05080d] hover:bg-[#0e1522] border border-[rgba(255,255,255,0.08)] text-left transition-all cursor-pointer"
+                  >
+                    <div className="text-xs font-semibold text-white">{item.name}</div>
+                    <div className="text-[10px] font-mono text-[#64748b] mt-0.5">{item.sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Unified Tasks + Persistent Memory */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-3.5 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-2">
+                <div className="text-xs font-bold tracking-wider uppercase text-white">
+                  Tasks ({tasks.filter((t) => !t.done).length})
+                </div>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newTask.trim()) return;
+                    onAddTask(newTask.trim());
+                    setNewTask('');
+                  }}
+                  className="flex gap-1.5"
+                >
+                  <input
+                    value={newTask}
+                    onChange={(e) => setNewTask(e.target.value)}
+                    placeholder="Add task..."
+                    className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#05080d] border border-[rgba(255,255,255,0.08)] text-xs text-white outline-none"
+                  />
+                  <button type="submit" className="px-3 py-1.5 rounded-lg bg-white text-[#04060a] text-xs font-bold cursor-pointer">
+                    +
+                  </button>
+                </form>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {tasks.map((t) => (
+                    <div key={t.id} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#05080d] text-xs">
+                      <span
+                        onClick={() => onToggleTask(t.id)}
+                        className={`cursor-pointer truncate flex-1 ${t.done ? 'line-through text-[#475569]' : 'text-[#e2e8f0]'}`}
+                      >
+                        {t.title}
+                      </span>
+                      <button onClick={() => onDeleteTask(t.id)} className="text-[#64748b] hover:text-white ml-2 cursor-pointer">
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-[#090d15] border border-[rgba(255,255,255,0.09)] space-y-2">
+                <div className="text-xs font-bold tracking-wider uppercase text-white">
+                  Memory Vault ({memories.length})
+                </div>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!newMem.trim()) return;
+                    onAddMemory(newMem.trim());
+                    setNewMem('');
+                  }}
+                  className="flex gap-1.5"
+                >
+                  <input
+                    value={newMem}
+                    onChange={(e) => setNewMem(e.target.value)}
+                    placeholder="Store personal note..."
+                    className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#05080d] border border-[rgba(255,255,255,0.08)] text-xs text-white outline-none"
+                  />
+                  <button type="submit" className="px-3 py-1.5 rounded-lg bg-[#38bdf8] text-[#04060a] text-xs font-bold cursor-pointer">
+                    Save
+                  </button>
+                </form>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {memories.map((m) => (
+                    <div key={m.id} className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-[#05080d] text-xs">
+                      <span className="truncate flex-1 text-[#cbd5e1]">{m.text}</span>
+                      <button onClick={() => onDeleteMemory(m.id)} className="text-[#64748b] hover:text-white ml-2 cursor-pointer">
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
+
+      {/* ==================== UNIFIED 5-TAB PRECISION BOTTOM DOCK (ZERO OVERFLOW!) ==================== */}
+      <nav className="pointer-events-auto shrink-0 border-t border-[rgba(255,255,255,0.08)] bg-[rgba(5,8,13,0.95)] backdrop-blur-xl px-2 pt-1.5 pb-[max(8px,env(safe-area-inset-bottom))]">
+        <div className="max-w-xl mx-auto grid grid-cols-5 gap-1">
+          {[
+            { id: 'core', label: 'CORE', sub: 'Voice OS', onClick: () => setActiveTab('core'), active: activeTab === 'core' },
+            { id: 'voice', label: 'STT / TTS', sub: 'Voices', onClick: () => setActiveTab('voice'), active: activeTab === 'voice' },
+            { id: 'control', label: 'CONTROL', sub: 'Phone & OS', onClick: () => setActiveTab('control'), active: activeTab === 'control' },
+            { id: 'trader', label: 'TRADER', sub: '990 Charts', onClick: onOpenTradingBot, active: false },
+            { id: 'studio', label: 'STUDIO', sub: 'YouTube AI', onClick: onOpenYouTubeStudio, active: false },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={tab.onClick}
+              className={`py-2 px-1 rounded-xl flex flex-col items-center justify-center transition-all cursor-pointer ${
+                tab.active
+                  ? 'bg-[rgba(56,189,248,0.14)] border border-[rgba(56,189,248,0.4)] text-white'
+                  : 'border border-transparent text-[#64748b] hover:text-[#cbd5e1]'
+              }`}
+            >
+              <span className="text-[10.5px] font-bold tracking-[0.12em]">{tab.label}</span>
+              <span className="text-[8.5px] font-mono opacity-75 mt-0.5">{tab.sub}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
     </div>
   );
 };

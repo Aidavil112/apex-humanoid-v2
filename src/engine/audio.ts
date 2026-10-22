@@ -177,12 +177,16 @@ class AudioEngine {
     this.pcmNode = proc;
     this.pcmSilentGain = zeroGain;
 
+    // Adaptive LiveKit-grade Noise-Floor + Human Speech Crest Detector
+    // Fixes Android WebView AGC ceiling-fan noise triggering false speech forever!
     let preRoll: Float32Array[] = [];
     let speechChunks: Float32Array[] = [];
     let inSpeech = false;
     let speechFrames = 0;
     let silenceFrames = 0;
-    let noiseFloor = 0.012;
+    let maxSpeechRms = 0;
+    let noiseFloor = 0.035;
+    let warmupFrames = 0;
 
     const downsample16k = (input: Float32Array): Float32Array => {
       if (Math.abs(ratio - 1) < 0.02) return new Float32Array(input);
@@ -202,19 +206,22 @@ class AudioEngine {
       return out;
     };
 
-    const flushNow = () => {
-      if (speechChunks.length < 3) {
-        speechChunks = [];
-        inSpeech = false;
-        speechFrames = 0;
-        silenceFrames = 0;
-        return;
-      }
-      const wav = AudioEngine.encodeWav16k(speechChunks);
+    const resetSpeech = () => {
       speechChunks = [];
       inSpeech = false;
       speechFrames = 0;
       silenceFrames = 0;
+      maxSpeechRms = 0;
+    };
+
+    const flushNow = () => {
+      // Require genuine human speech energy clearly above ambient room fan floor!
+      if (speechChunks.length < 5 || maxSpeechRms < Math.max(0.038, noiseFloor * 1.9)) {
+        resetSpeech();
+        return;
+      }
+      const wav = AudioEngine.encodeWav16k(speechChunks);
+      resetSpeech();
       opts.onUtteranceWav(wav);
     };
 
@@ -229,50 +236,61 @@ class AudioEngine {
         if (a > peak) peak = a;
       }
       const rms = Math.sqrt(sum / ch.length);
-      const uiLevel = Math.min(1, Math.max(rms * 16, peak * 5));
+      const uiLevel = Math.min(1, Math.max(0, (rms - noiseFloor) * 20));
       opts.onLevel(uiLevel);
 
+      // Calibrate initial 6 frames (~250ms) to measure room fan / Android AGC floor
+      if (warmupFrames < 6) {
+        noiseFloor = warmupFrames === 0 ? rms : noiseFloor * 0.65 + rms * 0.35;
+        warmupFrames++;
+        return;
+      }
+
       if (opts.isMutedGate()) {
-        inSpeech = false;
-        speechFrames = 0;
-        silenceFrames = 0;
-        speechChunks = [];
+        resetSpeech();
         return;
       }
 
       const pcm16 = downsample16k(ch);
-      const threshold = Math.max(0.012, Math.min(0.06, noiseFloor * 2.25));
+      // Dynamic threshold with NO 0.06 hard cap — scales cleanly even if fan noise is 0.08!
+      const threshold = Math.max(0.036, noiseFloor * 2.35);
+      const isHumanVoiceFrame = rms > threshold && peak > Math.max(0.11, noiseFloor * 3.1);
 
-      if (rms > threshold) {
+      if (isHumanVoiceFrame) {
         if (!inSpeech) {
           inSpeech = true;
           speechChunks = [...preRoll];
+          maxSpeechRms = rms;
+        } else if (rms > maxSpeechRms) {
+          maxSpeechRms = rms;
         }
         speechChunks.push(pcm16);
         speechFrames++;
         silenceFrames = 0;
-        // Max ~7s per turn so user never waits long
-        if (speechFrames >= 165) {
-          flushNow();
+        // If steady loud noise somehow persists 130 frames (~5.5s) with low crest, re-anchor noise floor instead of hallucinating!
+        if (speechFrames >= 135) {
+          if (maxSpeechRms < noiseFloor * 3.0) {
+            noiseFloor = rms * 0.92;
+            resetSpeech();
+          } else {
+            flushNow();
+          }
         }
       } else {
-        // Slowly adapt room/fan baseline when not actively speaking
         if (!inSpeech) {
-          noiseFloor = noiseFloor * 0.94 + rms * 0.06;
+          // Track ambient noise floor continuously
+          noiseFloor = noiseFloor * 0.93 + rms * 0.07;
           preRoll.push(pcm16);
-          if (preRoll.length > 8) preRoll.shift(); // ~340ms pre-speech buffer!
+          if (preRoll.length > 7) preRoll.shift();
         } else {
           speechChunks.push(pcm16);
           silenceFrames++;
-          // ~560ms pause after real speech (>= 4 frames ~= 170ms) -> send immediately!
-          if (silenceFrames >= 13) {
-            if (speechFrames >= 4) {
+          // ~580ms natural end-of-sentence pause after >= 6 real speech frames (~260ms)
+          if (silenceFrames >= 14) {
+            if (speechFrames >= 6) {
               flushNow();
             } else {
-              inSpeech = false;
-              speechFrames = 0;
-              silenceFrames = 0;
-              speechChunks = [];
+              resetSpeech();
             }
           }
         }

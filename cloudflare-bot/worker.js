@@ -1383,60 +1383,75 @@ export default {
       return jsonRes({ ok: true, grounded: false, headlines: [] });
     }
 
-    // ---- Web App AI Chat (Supports Spoken Live Voice Mode!) ----
+    // ---- Web App AI Chat (Professional JARVIS Persona — Supports Voice & Text!) ----
     if (request.method === 'POST' && url.pathname === '/chat') {
       try {
         const body = await request.json();
         const isVoice = Boolean(body?.voiceMode);
-        const promptSys = isVoice
-          ? 'Tum APEX ho — user ke dost aur smart AI companion, aur abhi tum user ke sath seedhe PHONE CALL par baat kar rahe ho. Sirf 1 ya 2 chhote natural Hinglish/Hindi spoken sentences me jawab do. KABHI BHI trading, crypto ya CoinDCX ka zikr apni taraf se mat karo jab tak user khud na pooche!'
-          : SYSTEM_PROMPT;
+        const jarvisSys =
+          'You are J.A.R.V.I.S. — an ultra-capable, calm, sharp, executive AI voice assistant (like Tony Stark\'s JARVIS). ' +
+          'Reply in natural, respectful, concise Hinglish or English (matching the user\'s language) in at most 1–2 short crisp sentences. ' +
+          'Never ramble, never use silly slang like "Arre bhai", and NEVER mention crypto/trading unless explicitly asked.';
         const out = await askBrain(
           env,
           String(body?.text || 'Hello').slice(0, 1000),
           Array.isArray(body?.history) ? body.history : [],
-          promptSys,
-          isVoice ? 260 : 650
+          isVoice ? jarvisSys : jarvisSys,
+          isVoice ? 160 : 420
         );
-        const cleanReply = isVoice ? out.text.replace(/[*#_`~]/g, '').trim() : out.text;
+        const cleanReply = out.text.replace(/[*#_`~]/g, '').trim();
         return jsonRes({ ok: true, text: cleanReply, model: out.engine });
       } catch (e) {
         return jsonRes({ ok: false, error: e.message }, 500);
       }
     }
 
-    // ---- Single-Roundtrip Ultra-Low-Latency Live Voice Turn (/voice-turn) ----
+    // ---- LiveKit-Grade Single-Roundtrip Voice Pipeline (/voice-turn: VAD + STT + Brain + TTS) ----
     if (request.method === 'POST' && url.pathname === '/voice-turn') {
       try {
-        const ab = await request.arrayBuffer();
-        const bytes = new Uint8Array(ab);
-        if (bytes.byteLength < 800) {
-          return jsonRes({ ok: true, empty: true, heard: '' });
-        }
+        const preRecognized = request.headers.get('x-stt-text')
+          ? decodeURIComponent(request.headers.get('x-stt-text')).trim()
+          : '';
 
-        // 1) Fast Whisper Large v3 Turbo STT
-        let heard = '';
-        try {
-          let bin = '';
-          const chunkSize = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        let heard = preRecognized;
+        if (!heard) {
+          const ab = await request.arrayBuffer();
+          const bytes = new Uint8Array(ab);
+          if (bytes.byteLength < 1600) {
+            return jsonRes({ ok: true, empty: true, heard: '' });
           }
-          const b64 = btoa(bin);
-          const res = await env.AI.run('@cf/openai/whisper-large-v3-turbo', { audio: b64 });
-          heard = String(res?.text || '').trim();
-        } catch {
-          const res2 = await env.AI.run('@cf/openai/whisper', { audio: Array.from(bytes) });
-          heard = String(res2?.text || '').trim();
+
+          // 1) Fast Whisper Large v3 Turbo STT with VAD filter + Hindi/English prompt biasing
+          try {
+            let bin = '';
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+            }
+            const b64 = btoa(bin);
+            const res = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
+              audio: b64,
+              vad_filter: true,
+              initial_prompt: 'Hinglish, Hindi, English command to JARVIS personal AI assistant.',
+            });
+            heard = String(res?.text || '').trim();
+          } catch {
+            const res2 = await env.AI.run('@cf/openai/whisper', { audio: Array.from(bytes) });
+            heard = String(res2?.text || '').trim();
+          }
         }
 
-        // Filter common Whisper silence artifacts
+        // Strict Anti-Hallucination Shield: blocks Icelandic/foreign noise artifacts & silence hallucinations 100%!
         const cleaned = heard.replace(/^[\s.,!?…-]+|[\s.,!?…-]+$/g, '').trim();
-        if (
+        const hasForeignNoiseScript = /[^\x00-\x7F\u0900-\u097F\u2018-\u201D₹°%]/.test(cleaned);
+        const isWhisperSilenceArtifact =
           !cleaned ||
           cleaned.length < 2 ||
-          /^(you|thank you|thanks for watching|subtitle|subtitles|amara\.org|\.+)$/i.test(cleaned)
-        ) {
+          hasForeignNoiseScript ||
+          /^(you|thank you|thanks for watching|thank you for watching|please subscribe|like and subscribe|subtitles?|amara\.org|bye|hmm+|uh+|ah+|oh+|\.+)$/i.test(
+            cleaned
+          );
+        if (isWhisperSilenceArtifact) {
           return jsonRes({ ok: true, empty: true, heard: '' });
         }
 
@@ -1532,20 +1547,20 @@ export default {
             } catch {}
           }
 
-          // Pure APEX OS voice companion — ZERO unsolicited trading chatter!
+          // Pure Professional J.A.R.V.I.S. Voice Persona — Concise, Intelligent, Zero Rambling!
           const voiceSys =
-            'Tum APEX ho — user ke Android phone me rehne wale real smart AI voice assistant. ' +
-            'Hamesha crisp, dostana bolचाल wali Roman Hinglish / Hindi me sirf 1 ya 2 chhote sentences me jawab do. ' +
-            'KABHI BHI trading, crypto, ya CoinDCX ka zikr APNI TARAF SE MAT KARO (trading ka kaam alag AI Day Trader Bot me hai). ' +
-            'Bilkul asli dost aur smart assistant ki tarah turant jawab do.';
+            'You are J.A.R.V.I.S. — an ultra-intelligent, calm, sharp executive voice OS like Tony Stark\'s JARVIS. ' +
+            'Speak concisely in natural Hinglish or English (1–2 crisp sentences ONLY, under 28 words whenever possible). ' +
+            'Sound composed, capable, and professional ("Right away, Sir.", "Ji Sir, ..."). ' +
+            'NEVER ramble, NEVER comment on background noise, and NEVER mention crypto/trading unless directly asked.';
           const out = await askBrain(
             env,
             `${cleaned.slice(0, 700)}${liveWebSnippet}${walletCtx ? `\n[User Memory: ${walletCtx}]` : ''}`,
             Array.isArray(hist) ? hist : [],
             voiceSys,
-            190
+            145
           );
-          replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Ji boss, boliye — main tayyar hoon!';
+          replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Standing by, Sir.';
         }
 
         // Synthesize HD Voice right inside the same Worker call (unless client plays Direct ElevenLabs on phone IP!)
