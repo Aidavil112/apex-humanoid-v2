@@ -77,7 +77,14 @@ export const App: React.FC = () => {
   // Features
   const [gestureActive, setGestureActive] = useState(false);
   const [isListening, setIsListening] = useState(false);
-  const [langMode, setLangMode] = useState<'en-IN' | 'hi-IN'>('en-IN');
+  const [liveVoiceStage, setLiveVoiceStage] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [liveUserText, setLiveUserText] = useState<string>('');
+  const [liveBotText, setLiveBotText] = useState<string>('');
+  const [langMode, setLangMode] = useState<'en-IN' | 'hi-IN'>('hi-IN');
+  const liveSpeakingRef = useRef<boolean>(false);
+  const mediaRecRef = useRef<MediaRecorder | null>(null);
+  const vadTimerRef = useRef<any>(null);
+  const sendChunkNowRef = useRef<(() => void) | null>(null);
   const [deepMode, setDeepMode] = useState(false);
   const [bgOn, setBgOn] = useState(true);
   const [sfxOn, setSfxOn] = useState(true);
@@ -187,6 +194,8 @@ export const App: React.FC = () => {
   /** Immediately halts all browser SpeechSynthesis, active server TTS audio, and pending speech timers. */
   const cancelAllSpeech = useCallback(() => {
     speechSeqRef.current += 1;
+    liveSpeakingRef.current = false;
+    audio.stopVoiceBuffer();
     clearTimeout(greetTimerRef.current);
     clearInterval(ttsPulseRef.current);
     ttsPulseRef.current = null;
@@ -229,57 +238,41 @@ export const App: React.FC = () => {
         }
         if (!res.ok) throw new Error('Voice fetch status ' + res.status);
         if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
-        const blob = await res.blob();
+        const arrayBuf = await res.arrayBuffer();
         if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
-        const url = URL.createObjectURL(blob);
-        const audioEl = new Audio(url);
-        ttsAudioRef.current = audioEl;
 
-        audioEl.onplay = () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) {
-            audioEl.pause();
-            return;
+        // Play directly through unlocked WebAudio context (NEVER blocked by mobile autoplay!)
+        const played = await audio.playVoiceArrayBuffer(
+          arrayBuf,
+          () => {
+            liveSpeakingRef.current = true;
+            setLiveVoiceStage('speaking');
+            if (engineRef.current) engineRef.current.voiceTarget = 1.0;
+            clearInterval(ttsPulseRef.current);
+            ttsPulseRef.current = setInterval(() => {
+              if (!poweredOnRef.current || seq !== speechSeqRef.current) {
+                clearInterval(ttsPulseRef.current);
+                return;
+              }
+              if (engineRef.current) engineRef.current.voiceTarget = 0.75 + audio.analyserRms() * 0.5;
+            }, 90);
+          },
+          () => {
+            clearInterval(ttsPulseRef.current);
+            liveSpeakingRef.current = false;
+            if (engineRef.current) engineRef.current.voiceTarget = 0.15;
+            if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
+            activeSentimentRef.current = null;
+            setSentimentInfo(null);
+            setMood(micStreamRef.current ? 'listening' : 'idle');
+            setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+            onEnd?.();
           }
-          audio.ensureCtx();
-          if (engineRef.current) engineRef.current.voiceTarget = 1.0;
-          clearInterval(ttsPulseRef.current);
-          ttsPulseRef.current = setInterval(() => {
-            if (!poweredOnRef.current || seq !== speechSeqRef.current) {
-              clearInterval(ttsPulseRef.current);
-              return;
-            }
-            audio.triggerVoicePulse(0.9);
-            if (engineRef.current) engineRef.current.voiceTarget = 0.8 + Math.random() * 0.4;
-          }, 120);
-        };
-
-        audioEl.onended = () => {
-          clearInterval(ttsPulseRef.current);
-          if (ttsAudioRef.current === audioEl) ttsAudioRef.current = null;
-          if (engineRef.current) engineRef.current.voiceTarget = 0.15;
-          URL.revokeObjectURL(url);
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          activeSentimentRef.current = null;
-          setSentimentInfo(null);
-          setMood('idle');
-          onEnd?.();
-        };
-
-        audioEl.onerror = () => {
-          clearInterval(ttsPulseRef.current);
-          if (ttsAudioRef.current === audioEl) ttsAudioRef.current = null;
-          URL.revokeObjectURL(url);
-          if (engineRef.current) engineRef.current.voiceTarget = 0.15;
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          activeSentimentRef.current = null;
-          setSentimentInfo(null);
-          setMood('idle');
-        };
-
-        await audioEl.play();
-        return true;
+        );
+        return played;
       } catch (err) {
         console.warn('Server TTS failed:', err);
+        liveSpeakingRef.current = false;
         return false;
       }
     },
@@ -292,6 +285,8 @@ export const App: React.FC = () => {
       const seq = speechSeqRef.current + 1;
       cancelAllSpeech();
       speechSeqRef.current = seq;
+      liveSpeakingRef.current = true;
+      setLiveBotText(text);
       audio.ensureCtx();
 
       if (!activeSentimentRef.current || activeSentimentRef.current === 'idle') {
@@ -300,79 +295,43 @@ export const App: React.FC = () => {
         audio.mood(activeSentimentRef.current);
       }
 
-      if ('speechSynthesis' in window) {
-        try {
-          window.speechSynthesis.resume();
-        } catch (e) {}
-
-        const u = new SpeechSynthesisUtterance(text);
-        const voice = voiceFor(text);
-        if (voice) u.voice = voice;
-        u.lang = DEVANAGARI_RE.test(text) ? 'hi-IN' : langMode;
-        u.rate = langMode === 'hi-IN' ? 0.94 : 0.98;
-        u.pitch = 0.92;
-        u.volume = 1;
-
-        let spoke = false;
-
-        u.onstart = () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) {
-            window.speechSynthesis.cancel();
+      // PRIMARY: Real ElevenLabs HD Cloud Voice over unlocked WebAudio (works 100% on Android/iOS!)
+      playServerVoice(text, seq, onEnd).then((ok) => {
+        if (ok || !poweredOnRef.current || seq !== speechSeqRef.current) return;
+        // Offline fallback ONLY if cloud voice unreachable
+        if ('speechSynthesis' in window) {
+          try {
+            window.speechSynthesis.resume();
+            const u = new SpeechSynthesisUtterance(text);
+            const voice = voiceFor(text);
+            if (voice) u.voice = voice;
+            u.lang = DEVANAGARI_RE.test(text) ? 'hi-IN' : langMode;
+            u.rate = 0.96;
+            u.onstart = () => {
+              setLiveVoiceStage('speaking');
+              audio.triggerVoicePulse(1.0);
+            };
+            u.onend = () => {
+              liveSpeakingRef.current = false;
+              setMood(micStreamRef.current ? 'listening' : 'idle');
+              setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+              onEnd?.();
+            };
+            u.onerror = () => {
+              liveSpeakingRef.current = false;
+              setMood(micStreamRef.current ? 'listening' : 'idle');
+              setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+              onEnd?.();
+            };
+            window.speechSynthesis.speak(u);
             return;
-          }
-          spoke = true;
-          audio.ensureCtx();
-          audio.triggerVoicePulse(1.0);
-        };
-
-        u.onboundary = () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          if (engineRef.current) {
-            engineRef.current.voiceTarget = 1.0;
-          }
-          audio.triggerVoicePulse(0.85);
-        };
-
-        u.onend = () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          if (engineRef.current) {
-            engineRef.current.voiceTarget = 0.15;
-          }
-          setTimeout(() => {
-            if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-            activeSentimentRef.current = null;
-            setSentimentInfo(null);
-            setMood('idle');
-            onEnd?.();
-          }, 300);
-        };
-
-        u.onerror = async () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          console.warn('Web speech error, falling back to server TTS');
-          const ok = await playServerVoice(text, seq, onEnd);
-          if (!ok && poweredOnRef.current && seq === speechSeqRef.current) {
-            activeSentimentRef.current = null;
-            setSentimentInfo(null);
-            setMood('idle');
-          }
-        };
-
-        window.speechSynthesis.speak(u);
-
-        // Fallback if browser SpeechSynthesis gets stuck without firing onstart
-        setTimeout(async () => {
-          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
-          if (!spoke && !window.speechSynthesis.speaking) {
-            const ok = await playServerVoice(text, seq, onEnd);
-            if (!ok && poweredOnRef.current && seq === speechSeqRef.current) {
-              setMood('idle');
-            }
-          }
-        }, 600);
-      } else {
-        playServerVoice(text, seq, onEnd);
-      }
+          } catch {}
+        }
+        liveSpeakingRef.current = false;
+        setMood(micStreamRef.current ? 'listening' : 'idle');
+        setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+        onEnd?.();
+      });
     },
     [voiceFor, langMode, setMood, playServerVoice, cancelAllSpeech]
   );
@@ -489,9 +448,12 @@ export const App: React.FC = () => {
 
       // Ask brain from server (with automatic failover to Cloudflare Workers AI endpoint!)
       try {
+        setLiveUserText(text);
+        setLiveVoiceStage('thinking');
         const t0 = performance.now();
         const chatBody = JSON.stringify({
           text,
+          voiceMode: true,
           history: chatMemRef.current,
           model: deepMode ? 'gemini-3.8-flash' : undefined,
         });
@@ -529,81 +491,203 @@ export const App: React.FC = () => {
     [setMood, toast, speak, deepMode]
   );
 
-  const startEars = useCallback(() => {
+  const startEars = useCallback(async () => {
     audio.ensureCtx();
+    setLiveUserText('');
+    setLiveBotText('');
 
-    // Stream mic input into audio engine analyser for live visual waveform
+    let stream: MediaStream | null = null;
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then((stream) => {
-          micStreamRef.current = stream;
-          audio.connectMicStream(stream);
-        })
-        .catch((err) => {
-          console.warn('Microphone stream access not granted for waveform', err);
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
+        micStreamRef.current = stream;
+        audio.connectMicStream(stream);
+      } catch (err) {
+        toast('⚠️ Phone me Microphone permission Allow karein!');
+        setIsListening(false);
+        return;
+      }
     }
 
+    setIsListening(true);
+    setLiveVoiceStage('listening');
+    setMood('listening');
+    toast('🎙️ Live Voice ON — boliye, main sun raha hoon!');
+
+    let nativeFiredRecently = false;
     const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      toast('SpeechRecognition not supported in this browser.');
-      return;
-    }
-    try {
-      const r = new SR();
-      r.lang = langMode;
-      r.interimResults = true;
-      r.continuous = true;
-      r.maxAlternatives = 1;
+    if (SR) {
+      try {
+        const r = new SR();
+        r.lang = langMode;
+        r.interimResults = true;
+        r.continuous = true;
+        r.maxAlternatives = 1;
 
-      r.onresult = (e: any) => {
-        let finalTxt = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const t = e.results[i][0].transcript;
-          if (e.results[i].isFinal) finalTxt += t;
+        r.onresult = (e: any) => {
+          if (liveSpeakingRef.current || busyRef.current) return;
+          let interimTxt = '';
+          let finalTxt = '';
+          for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = e.results[i][0].transcript;
+            if (e.results[i].isFinal) finalTxt += t;
+            else interimTxt += t;
+          }
+          if (interimTxt.trim()) {
+            nativeFiredRecently = true;
+            setLiveUserText(interimTxt.trim());
+          }
+          if (finalTxt.trim()) {
+            nativeFiredRecently = true;
+            const now = Date.now();
+            if (now - lastSubmitRef.current.time > 1200 || finalTxt !== lastSubmitRef.current.text) {
+              lastSubmitRef.current = { time: now, text: finalTxt };
+              setLiveUserText(finalTxt.trim());
+              handleUtterance(finalTxt.trim());
+            }
+          }
+        };
+
+        r.onend = () => {
+          if (recRef.current && micStreamRef.current) {
+            try {
+              r.start();
+            } catch {}
+          }
+        };
+
+        recRef.current = r;
+        r.start();
+      } catch {}
+    }
+
+    // Universal Cloud Whisper VAD Engine (works in Chrome Custom Tabs, WebViews, Safari & noisy rooms!)
+    if (stream && typeof MediaRecorder !== 'undefined') {
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+      let chunks: BlobPart[] = [];
+      let speakingDetected = false;
+      let silenceTicks = 0;
+      let totalSpeechTicks = 0;
+
+      const startRecorderCycle = () => {
+        if (!micStreamRef.current) return;
+        chunks = [];
+        speakingDetected = false;
+        silenceTicks = 0;
+        totalSpeechTicks = 0;
+        try {
+          const rec = mimeType ? new MediaRecorder(stream!, { mimeType }) : new MediaRecorder(stream!);
+          mediaRecRef.current = rec;
+          rec.ondataavailable = (ev) => {
+            if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+          };
+          rec.onstop = async () => {
+            const hadSpeech = speakingDetected;
+            const captured = chunks;
+            chunks = [];
+            if (micStreamRef.current) {
+              startRecorderCycle();
+            }
+            if (!hadSpeech || captured.length === 0 || nativeFiredRecently || liveSpeakingRef.current || busyRef.current) {
+              nativeFiredRecently = false;
+              return;
+            }
+            const blob = new Blob(captured, { type: mimeType || 'audio/webm' });
+            if (blob.size < 1800) return;
+            try {
+              setLiveVoiceStage('thinking');
+              const buf = await blob.arrayBuffer();
+              const sttRes = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/stt', {
+                method: 'POST',
+                headers: { 'content-type': blob.type || 'audio/webm' },
+                body: buf,
+              });
+              const sttJson = await sttRes.json();
+              const heard = String(sttJson?.text || '').trim();
+              if (heard.length > 1 && !liveSpeakingRef.current && !busyRef.current) {
+                const now = Date.now();
+                if (now - lastSubmitRef.current.time > 1200) {
+                  lastSubmitRef.current = { time: now, text: heard };
+                  setLiveUserText(heard);
+                  toast(`🎤 "${heard}"`, 2500);
+                  handleUtterance(heard);
+                  return;
+                }
+              }
+              if (!liveSpeakingRef.current) setLiveVoiceStage('listening');
+            } catch {
+              if (!liveSpeakingRef.current) setLiveVoiceStage('listening');
+            }
+          };
+          rec.start(250);
+        } catch {}
+      };
+
+      startRecorderCycle();
+
+      sendChunkNowRef.current = () => {
+        if (mediaRecRef.current && mediaRecRef.current.state === 'recording') {
+          speakingDetected = true;
+          nativeFiredRecently = false;
+          try {
+            mediaRecRef.current.stop();
+          } catch {}
         }
-        if (finalTxt.trim()) {
-          const now = Date.now();
-          if (now - lastSubmitRef.current.time > 1200 || finalTxt !== lastSubmitRef.current.text) {
-            lastSubmitRef.current = { time: now, text: finalTxt };
-            toast(`Heard: “${finalTxt}”`, 2500);
-            handleUtterance(finalTxt);
+      };
+
+      clearInterval(vadTimerRef.current);
+      vadTimerRef.current = setInterval(() => {
+        if (!micStreamRef.current) return;
+        if (liveSpeakingRef.current || busyRef.current) {
+          speakingDetected = false;
+          silenceTicks = 0;
+          totalSpeechTicks = 0;
+          chunks = [];
+          return;
+        }
+        const rms = audio.analyserRms();
+        if (rms > 0.14) {
+          speakingDetected = true;
+          totalSpeechTicks += 1;
+          silenceTicks = 0;
+        } else if (speakingDetected) {
+          silenceTicks += 1;
+          // ~900ms pause after real speech (or max 9s utterance) -> send to Whisper automatically!
+          if ((silenceTicks >= 9 && totalSpeechTicks >= 3) || totalSpeechTicks >= 90) {
+            if (mediaRecRef.current && mediaRecRef.current.state === 'recording') {
+              try {
+                mediaRecRef.current.stop();
+              } catch {}
+            }
           }
         }
-      };
-
-      r.onerror = (ev: any) => {
-        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
-          toast('Microphone access blocked.');
-          setIsListening(false);
-        }
-      };
-
-      r.onend = () => {
-        if (recRef.current) {
-          try {
-            r.start();
-          } catch (e) {}
-        }
-      };
-
-      recRef.current = r;
-      r.start();
-      setIsListening(true);
-      setMood('listening');
-      toast('Listening — speak anytime');
-    } catch (e) {
-      toast('Could not start microphone');
+      }, 100);
     }
   }, [langMode, toast, setMood, handleUtterance]);
 
   const stopEars = useCallback(() => {
-    if (recRef.current) {
+    clearInterval(vadTimerRef.current);
+    vadTimerRef.current = null;
+    sendChunkNowRef.current = null;
+    if (mediaRecRef.current) {
       try {
-        recRef.current.stop();
-      } catch (e) {}
+        mediaRecRef.current.onstop = null;
+        if (mediaRecRef.current.state !== 'inactive') mediaRecRef.current.stop();
+      } catch {}
+      mediaRecRef.current = null;
+    }
+    if (recRef.current) {
+      const old = recRef.current;
       recRef.current = null;
+      try {
+        old.stop();
+      } catch (e) {}
     }
     if (micStreamRef.current) {
       try {
@@ -612,9 +696,11 @@ export const App: React.FC = () => {
       micStreamRef.current = null;
     }
     audio.disconnectMicStream();
+    cancelAllSpeech();
     setIsListening(false);
+    setLiveVoiceStage('idle');
     setMood('idle');
-  }, [setMood]);
+  }, [setMood, cancelAllSpeech]);
 
   const toggleMic = useCallback(() => {
     audio.ensureCtx();
@@ -1103,6 +1189,65 @@ export const App: React.FC = () => {
             themeAccent={THEMES[themeIdx].accent}
           />
         </>
+      )}
+
+      {/* Floating Live 2-Way Voice Call Bar when Live Voice is Active */}
+      {entered && poweredOn && isListening && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(86px+env(safe-area-inset-bottom))] z-30 w-[92vw] max-w-md px-3.5 py-2.5 rounded-2xl bg-[rgba(4,14,22,0.88)] border border-[rgba(0,245,160,0.45)] backdrop-blur-xl shadow-[0_12px_36px_rgba(0,0,0,0.85)] flex flex-col gap-1.5 font-mono">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-xs font-bold">
+              <span
+                className={`w-2.5 h-2.5 rounded-full ${
+                  liveVoiceStage === 'speaking'
+                    ? 'bg-[#4fd2ff] animate-ping'
+                    : liveVoiceStage === 'thinking'
+                    ? 'bg-[#ffd13b] animate-pulse'
+                    : 'bg-[#00f5a0] animate-ping'
+                }`}
+              />
+              <span className="text-white">
+                {liveVoiceStage === 'speaking'
+                  ? '🔊 APEX Bol Raha Hai…'
+                  : liveVoiceStage === 'thinking'
+                  ? '🧠 APEX Soch Raha Hai…'
+                  : '🟢 LIVE VOICE ON — Boliye…'}
+              </span>
+            </div>
+
+            {liveVoiceStage === 'speaking' ? (
+              <button
+                onClick={() => {
+                  cancelAllSpeech();
+                  busyRef.current = false;
+                  setLiveVoiceStage('listening');
+                  setMood('listening');
+                }}
+                className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(255,79,112,0.2)] border border-[#ff4f70] text-[#ff8fa3] text-[10px] font-bold"
+              >
+                ⏹ Roko / Bolo
+              </button>
+            ) : (
+              <button
+                onClick={() => sendChunkNowRef.current?.()}
+                className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(0,245,160,0.18)] border border-[#00f5a0] text-[#00f5a0] text-[10px] font-bold"
+                title="Shanti na ho to bolne ke baad Bhejo dabayein"
+              >
+                📤 Bhejo
+              </button>
+            )}
+          </div>
+
+          {liveUserText && (
+            <div className="text-[11px] text-[#9ee8ff] truncate">
+              🎤 Aap: <span className="text-white">"{liveUserText}"</span>
+            </div>
+          )}
+          {liveBotText && liveVoiceStage === 'speaking' && (
+            <div className="text-[11px] text-[#00f5a0] line-clamp-2 leading-snug">
+              🤖 APEX: {liveBotText}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Bottom Floating Dock — stays visible both ON & FULL OFF as the master power switch */}

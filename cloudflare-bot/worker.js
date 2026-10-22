@@ -968,12 +968,52 @@ export default {
       return jsonRes({ ok: true, grounded: false, headlines: [] });
     }
 
-    // ---- Web App AI Chat ----
+    // ---- Web App AI Chat (Supports Spoken Live Voice Mode!) ----
     if (request.method === 'POST' && url.pathname === '/chat') {
       try {
         const body = await request.json();
-        const out = await askBrain(env, String(body?.text || 'Hello').slice(0, 1000), Array.isArray(body?.history) ? body.history : []);
-        return jsonRes({ ok: true, text: out.text, model: out.engine });
+        const isVoice = Boolean(body?.voiceMode);
+        const promptSys = isVoice
+          ? 'Tum APEX Humanoid AI ho — phone par LIVE VOICE CALL me baat kar rahe ho. Sirf 1 se 3 chhote natural Hinglish/Hindi spoken sentences me jawab do (koi *, #, bullet points ya lamba text mat likho, bilkul insaan ki tarah bolo).'
+          : SYSTEM_PROMPT;
+        const out = await askBrain(
+          env,
+          String(body?.text || 'Hello').slice(0, 1000),
+          Array.isArray(body?.history) ? body.history : [],
+          promptSys,
+          isVoice ? 260 : 650
+        );
+        const cleanReply = isVoice ? out.text.replace(/[*#_`~]/g, '').trim() : out.text;
+        return jsonRes({ ok: true, text: cleanReply, model: out.engine });
+      } catch (e) {
+        return jsonRes({ ok: false, error: e.message }, 500);
+      }
+    }
+
+    // ---- Universal Live Voice Speech-to-Text (/stt via Cloudflare Workers AI Whisper) ----
+    if (request.method === 'POST' && url.pathname === '/stt') {
+      try {
+        const ab = await request.arrayBuffer();
+        const bytes = new Uint8Array(ab);
+        if (bytes.byteLength < 200) return jsonRes({ ok: true, text: '' });
+
+        // 1) Fast Whisper Large v3 Turbo (accepts base64 audio)
+        try {
+          let bin = '';
+          const chunkSize = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+          }
+          const b64 = btoa(bin);
+          const res = await env.AI.run('@cf/openai/whisper-large-v3-turbo', { audio: b64 });
+          if (typeof res?.text === 'string') {
+            return jsonRes({ ok: true, text: res.text.trim(), model: 'whisper-large-v3-turbo' });
+          }
+        } catch {}
+
+        // 2) Classic Whisper fallback (accepts integer byte array)
+        const res2 = await env.AI.run('@cf/openai/whisper', { audio: Array.from(bytes) });
+        return jsonRes({ ok: true, text: String(res2?.text || '').trim(), model: 'whisper' });
       } catch (e) {
         return jsonRes({ ok: false, error: e.message }, 500);
       }

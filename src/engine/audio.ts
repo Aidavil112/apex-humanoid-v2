@@ -17,6 +17,7 @@ class AudioEngine {
   private micSource: MediaStreamAudioSourceNode | null = null;
   private synthVoiceOsc: OscillatorNode | null = null;
   private synthVoiceGain: GainNode | null = null;
+  private activeVoiceSource: AudioBufferSourceNode | null = null;
 
   public ensureCtx(): AudioContext | null {
     if (!this.powered) return null;
@@ -83,6 +84,57 @@ class AudioEngine {
         this.micSource.disconnect();
       } catch (e) {}
       this.micSource = null;
+    }
+  }
+
+  public stopVoiceBuffer() {
+    if (this.activeVoiceSource) {
+      try {
+        this.activeVoiceSource.onended = null;
+        this.activeVoiceSource.stop();
+        this.activeVoiceSource.disconnect();
+      } catch (e) {}
+      this.activeVoiceSource = null;
+    }
+  }
+
+  public async playVoiceArrayBuffer(
+    rawBuf: ArrayBuffer,
+    onStart?: () => void,
+    onEnd?: () => void
+  ): Promise<boolean> {
+    if (!this.powered) return false;
+    const ctx = this.ensureCtx();
+    if (!ctx) return false;
+    try {
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      this.stopVoiceBuffer();
+      const decoded = await ctx.decodeAudioData(rawBuf.slice(0));
+      if (!this.powered) return false;
+      const src = ctx.createBufferSource();
+      src.buffer = decoded;
+      const voiceGain = ctx.createGain();
+      voiceGain.gain.value = 1.0;
+      src.connect(voiceGain);
+      voiceGain.connect(ctx.destination);
+      if (this.analyser) {
+        voiceGain.connect(this.analyser);
+      }
+      this.activeVoiceSource = src;
+      src.onended = () => {
+        if (this.activeVoiceSource === src) {
+          this.activeVoiceSource = null;
+        }
+        onEnd?.();
+      };
+      onStart?.();
+      src.start(0);
+      return true;
+    } catch (e) {
+      console.warn('WebAudio decode/play failed:', e);
+      return false;
     }
   }
 
@@ -329,6 +381,7 @@ class AudioEngine {
         this.synthVoiceGain.gain.cancelScheduledValues(t);
         this.synthVoiceGain.gain.value = 0;
       }
+      this.stopVoiceBuffer();
       if (this.actx.state !== 'closed') {
         this.actx.suspend().catch(() => {});
       }

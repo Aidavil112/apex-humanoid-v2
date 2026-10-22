@@ -100,14 +100,14 @@ export const Dock: React.FC<DockProps> = ({
       <button
         onClick={onToggleMic}
         aria-pressed={isListening}
-        aria-label="Voice microphone"
-        className={`cursor-pointer font-mono text-[11px] tracking-[0.14em] uppercase rounded-lg px-4 py-2 transition-all duration-200 border whitespace-nowrap ${
+        aria-label="Live Voice Conversation"
+        className={`cursor-pointer font-mono text-[11px] tracking-[0.12em] uppercase rounded-lg px-4 py-2 transition-all duration-200 border whitespace-nowrap ${
           isListening
-            ? 'text-[#0a1620] bg-[var(--cyan,#4fd2ff)] border-[var(--cyan,#4fd2ff)] font-semibold shadow-[0_0_18px_-4px_rgba(79,210,255,0.75)] animate-pulse'
-            : 'text-[#7fa8c2] border-transparent hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.07)]'
+            ? 'text-[#041a12] bg-[#00f5a0] border-[#00f5a0] font-extrabold shadow-[0_0_20px_-2px_rgba(0,245,160,0.85)] animate-pulse'
+            : 'text-[#eaf9ff] bg-[rgba(79,210,255,0.16)] border-[rgba(79,210,255,0.45)] hover:bg-[rgba(79,210,255,0.28)] font-semibold'
         }`}
       >
-        ● {isListening ? 'listening…' : 'mic'}
+        {isListening ? '🔴 LIVE ON' : '🎙️ LIVE VOICE'}
       </button>
     </div>
   );
