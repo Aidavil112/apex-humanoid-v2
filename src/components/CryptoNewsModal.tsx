@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { hubFetch } from '../engine/api';
 
 export interface NewsHeadline {
   id: string;
@@ -25,7 +24,7 @@ export const CryptoNewsModal: React.FC<CryptoNewsModalProps> = ({ isOpen, onClos
   const fetchNews = async () => {
     setLoading(true);
     try {
-      const res = await hubFetch('/api/news/grounding', {
+      const res = await fetch('/api/news/grounding', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });

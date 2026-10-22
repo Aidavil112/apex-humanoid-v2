@@ -15,8 +15,10 @@ class AudioEngine {
   public rmsBuf: Float32Array = new Float32Array(512);
   public micRmsBuf: Float32Array = new Float32Array(512);
 
-  // Mic stream source node for user voice visualization
+  // Mic stream source node for user voice visualization + pure 16kHz PCM WAV live capture
   private micSource: MediaStreamAudioSourceNode | null = null;
+  private pcmNode: ScriptProcessorNode | null = null;
+  private pcmSilentGain: GainNode | null = null;
   private synthVoiceOsc: OscillatorNode | null = null;
   private synthVoiceGain: GainNode | null = null;
   private activeVoiceSource: AudioBufferSourceNode | null = null;
@@ -87,12 +89,197 @@ class AudioEngine {
   }
 
   public disconnectMicStream() {
+    if (this.pcmNode) {
+      try {
+        this.pcmNode.onaudioprocess = null;
+        this.pcmNode.disconnect();
+      } catch (e) {}
+      this.pcmNode = null;
+    }
+    if (this.pcmSilentGain) {
+      try {
+        this.pcmSilentGain.disconnect();
+      } catch (e) {}
+      this.pcmSilentGain = null;
+    }
     if (this.micSource) {
       try {
         this.micSource.disconnect();
       } catch (e) {}
       this.micSource = null;
     }
+  }
+
+  /** Encode 16kHz Float32 mono PCM chunks into a universally valid 16-bit RIFF WAV ArrayBuffer. */
+  public static encodeWav16k(chunks: Float32Array[]): ArrayBuffer {
+    let totalSamples = 0;
+    for (const c of chunks) totalSamples += c.length;
+    const buffer = new ArrayBuffer(44 + totalSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (off: number, s: string) => {
+      for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + totalSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // Mono
+    view.setUint32(24, 16000, true); // 16 kHz
+    view.setUint32(28, 32000, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // Bits per sample
+    writeStr(36, 'data');
+    view.setUint32(40, totalSamples * 2, true);
+    let offset = 44;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++) {
+        const s = Math.max(-1, Math.min(1, chunk[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        offset += 2;
+      }
+    }
+    return buffer;
+  }
+
+  /**
+   * Bulletproof hardware-direct 16kHz PCM voice capture with adaptive room-noise floor.
+   * Works identically in Android APK WebView, Chrome Mobile, iOS Safari, and Desktop!
+   */
+  public async startLivePcmCapture(
+    stream: MediaStream,
+    opts: {
+      isMutedGate: () => boolean;
+      onLevel: (lvl: number) => void;
+      onUtteranceWav: (wavBuf: ArrayBuffer) => void;
+    }
+  ): Promise<() => void> {
+    const ctx = this.ensureCtx();
+    if (!ctx) return () => {};
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
+
+    this.disconnectMicStream();
+    this.connectMicStream(stream);
+    if (!this.micSource) return () => {};
+
+    const inRate = ctx.sampleRate || 48000;
+    const ratio = inRate / 16000;
+
+    const proc = ctx.createScriptProcessor(2048, 1, 1);
+    const zeroGain = ctx.createGain();
+    zeroGain.gain.value = 0.0; // Required on Chrome/Android so onaudioprocess ticks continuously with ZERO speaker output!
+    this.micSource.connect(proc);
+    proc.connect(zeroGain);
+    zeroGain.connect(ctx.destination);
+    this.pcmNode = proc;
+    this.pcmSilentGain = zeroGain;
+
+    let preRoll: Float32Array[] = [];
+    let speechChunks: Float32Array[] = [];
+    let inSpeech = false;
+    let speechFrames = 0;
+    let silenceFrames = 0;
+    let noiseFloor = 0.012;
+
+    const downsample16k = (input: Float32Array): Float32Array => {
+      if (Math.abs(ratio - 1) < 0.02) return new Float32Array(input);
+      const outLen = Math.max(1, Math.floor(input.length / ratio));
+      const out = new Float32Array(outLen);
+      for (let i = 0; i < outLen; i++) {
+        const start = Math.floor(i * ratio);
+        const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+        let acc = 0;
+        let cnt = 0;
+        for (let j = start; j < end; j++) {
+          acc += input[j];
+          cnt++;
+        }
+        out[i] = cnt > 0 ? acc / cnt : input[start] || 0;
+      }
+      return out;
+    };
+
+    const flushNow = () => {
+      if (speechChunks.length < 3) {
+        speechChunks = [];
+        inSpeech = false;
+        speechFrames = 0;
+        silenceFrames = 0;
+        return;
+      }
+      const wav = AudioEngine.encodeWav16k(speechChunks);
+      speechChunks = [];
+      inSpeech = false;
+      speechFrames = 0;
+      silenceFrames = 0;
+      opts.onUtteranceWav(wav);
+    };
+
+    proc.onaudioprocess = (ev) => {
+      if (!this.powered) return;
+      const ch = ev.inputBuffer.getChannelData(0);
+      let sum = 0;
+      let peak = 0;
+      for (let i = 0; i < ch.length; i++) {
+        const a = Math.abs(ch[i]);
+        sum += a * a;
+        if (a > peak) peak = a;
+      }
+      const rms = Math.sqrt(sum / ch.length);
+      const uiLevel = Math.min(1, Math.max(rms * 16, peak * 5));
+      opts.onLevel(uiLevel);
+
+      if (opts.isMutedGate()) {
+        inSpeech = false;
+        speechFrames = 0;
+        silenceFrames = 0;
+        speechChunks = [];
+        return;
+      }
+
+      const pcm16 = downsample16k(ch);
+      const threshold = Math.max(0.012, Math.min(0.06, noiseFloor * 2.25));
+
+      if (rms > threshold) {
+        if (!inSpeech) {
+          inSpeech = true;
+          speechChunks = [...preRoll];
+        }
+        speechChunks.push(pcm16);
+        speechFrames++;
+        silenceFrames = 0;
+        // Max ~7s per turn so user never waits long
+        if (speechFrames >= 165) {
+          flushNow();
+        }
+      } else {
+        // Slowly adapt room/fan baseline when not actively speaking
+        if (!inSpeech) {
+          noiseFloor = noiseFloor * 0.94 + rms * 0.06;
+          preRoll.push(pcm16);
+          if (preRoll.length > 8) preRoll.shift(); // ~340ms pre-speech buffer!
+        } else {
+          speechChunks.push(pcm16);
+          silenceFrames++;
+          // ~560ms pause after real speech (>= 4 frames ~= 170ms) -> send immediately!
+          if (silenceFrames >= 13) {
+            if (speechFrames >= 4) {
+              flushNow();
+            } else {
+              inSpeech = false;
+              speechFrames = 0;
+              silenceFrames = 0;
+              speechChunks = [];
+            }
+          }
+        }
+      }
+    };
+
+    return flushNow;
   }
 
   public stopVoiceBuffer() {

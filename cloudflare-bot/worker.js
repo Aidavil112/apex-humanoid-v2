@@ -14,7 +14,7 @@ const TG = (token) => `https://api.telegram.org/bot${token}`;
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  'access-control-allow-headers': 'content-type, x-voice-history, x-wallet-context',
 };
 
 const jsonRes = (obj, status = 200) =>
@@ -1346,7 +1346,7 @@ export default {
         const body = await request.json();
         const isVoice = Boolean(body?.voiceMode);
         const promptSys = isVoice
-          ? 'Tum APEX Humanoid AI ho — phone par LIVE VOICE CALL me baat kar rahe ho. Sirf 1 se 3 chhote natural Hinglish/Hindi spoken sentences me jawab do (koi *, #, bullet points ya lamba text mat likho, bilkul insaan ki tarah bolo).'
+          ? 'Tum APEX ho — user ke dost aur smart AI companion, aur abhi tum user ke sath seedhe PHONE CALL par baat kar rahe ho. Sirf 1 ya 2 chhote natural Hinglish/Hindi spoken sentences me jawab do. KABHI BHI trading, crypto ya CoinDCX ka zikr apni taraf se mat karo jab tak user khud na pooche!'
           : SYSTEM_PROMPT;
         const out = await askBrain(
           env,
@@ -1357,6 +1357,105 @@ export default {
         );
         const cleanReply = isVoice ? out.text.replace(/[*#_`~]/g, '').trim() : out.text;
         return jsonRes({ ok: true, text: cleanReply, model: out.engine });
+      } catch (e) {
+        return jsonRes({ ok: false, error: e.message }, 500);
+      }
+    }
+
+    // ---- Single-Roundtrip Ultra-Low-Latency Live Voice Turn (/voice-turn) ----
+    if (request.method === 'POST' && url.pathname === '/voice-turn') {
+      try {
+        const ab = await request.arrayBuffer();
+        const bytes = new Uint8Array(ab);
+        if (bytes.byteLength < 800) {
+          return jsonRes({ ok: true, empty: true, heard: '' });
+        }
+
+        // 1) Fast Whisper Large v3 Turbo STT
+        let heard = '';
+        try {
+          let bin = '';
+          const chunkSize = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+          }
+          const b64 = btoa(bin);
+          const res = await env.AI.run('@cf/openai/whisper-large-v3-turbo', { audio: b64 });
+          heard = String(res?.text || '').trim();
+        } catch {
+          const res2 = await env.AI.run('@cf/openai/whisper', { audio: Array.from(bytes) });
+          heard = String(res2?.text || '').trim();
+        }
+
+        // Filter common Whisper silence artifacts
+        const cleaned = heard.replace(/^[\s.,!?…-]+|[\s.,!?…-]+$/g, '').trim();
+        if (
+          !cleaned ||
+          cleaned.length < 2 ||
+          /^(you|thank you|thanks for watching|subtitle|subtitles|amara\.org|\.+)$/i.test(cleaned)
+        ) {
+          return jsonRes({ ok: true, empty: true, heard: '' });
+        }
+
+        // Optional conversation history from header
+        let hist = [];
+        try {
+          const hRaw = request.headers.get('x-voice-history');
+          if (hRaw) hist = JSON.parse(decodeURIComponent(hRaw));
+        } catch {}
+        const walletCtx = request.headers.get('x-wallet-context')
+          ? decodeURIComponent(request.headers.get('x-wallet-context'))
+          : '';
+
+        // Check quick live voice trading commands if user explicitly asks
+        const low = cleaned.toLowerCase();
+        let action = null;
+        let replyText = '';
+
+        if (/(mera\s*balance|wallet\s*balance|portfolio|kitna\s*paisa|kitne\s*paise)/i.test(low)) {
+          replyText = walletCtx || 'Aapka CoinDCX wallet connected hai, Trade tab me live rupay dikh rahe hain.';
+        } else if (/(auto\s*trad.*(off|band|stop|rok)|trading\s*(off|band|stop|rok))/i.test(low)) {
+          autoTradeState.enabled = false;
+          action = 'AUTOTRADE_OFF';
+          replyText = 'Theek hai, auto trading bilkul band kar di hai.';
+        } else if (/(auto\s*trad.*(on|chalu|start)|trading\s*(on|chalu|start))/i.test(low)) {
+          autoTradeState.enabled = true;
+          action = 'AUTOTRADE_ON';
+          replyText = 'Theek hai, smart auto trading chalu kar di hai.';
+        } else {
+          // Pure natural human phone conversation — ZERO unsolicited trading talk!
+          const voiceSys =
+            'Tum APEX ho — user ke dost aur smart AI companion, aur abhi tum user ke sath seedhe PHONE CALL par baat kar rahe ho. ' +
+            'Hamesha natural bolचाल wali Roman Hinglish / Hindi me sirf 1 ya 2 chhote sentences me jawab do. ' +
+            'KABHI BHI trading, crypto, ya CoinDCX ka zikr APNI TARAF SE MAT KARO jab tak user khud trading na pooche! ' +
+            'Bilkul asli insaan ki tarah dostana aur seedha jawab do.';
+          const out = await askBrain(env, cleaned.slice(0, 700), Array.isArray(hist) ? hist : [], voiceSys, 180);
+          replyText = out.text.replace(/[*#_`~]/g, '').trim() || 'Haan dost, main sun raha hoon, batao!';
+        }
+
+        // Synthesize HD Voice right inside the same Worker call -> ZERO extra roundtrip!
+        let audioBase64 = '';
+        let mime = 'audio/mpeg';
+        try {
+          const tts = await synthesizeSpeechBytes(env, replyText);
+          mime = tts.mime || 'audio/mpeg';
+          const u8 = tts.bytes instanceof Uint8Array ? tts.bytes : new Uint8Array(tts.bytes);
+          let b = '';
+          const cs = 0x8000;
+          for (let i = 0; i < u8.length; i += cs) {
+            b += String.fromCharCode(...u8.subarray(i, i + cs));
+          }
+          audioBase64 = btoa(b);
+        } catch {}
+
+        return jsonRes({
+          ok: true,
+          heard: cleaned,
+          reply: replyText,
+          action,
+          audioBase64,
+          mime,
+        });
       } catch (e) {
         return jsonRes({ ok: false, error: e.message }, 500);
       }

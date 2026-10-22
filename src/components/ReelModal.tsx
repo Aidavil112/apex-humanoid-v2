@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { hubFetch } from '../engine/api';
 
 interface ReelModalProps {
   isOpen: boolean;
@@ -59,7 +58,7 @@ export const ReelModal: React.FC<ReelModalProps> = ({
     setIsGenerating(true);
     onToast('Analyzing Facebook Reel viral hook with Gemini AI…');
     try {
-      const res = await hubFetch('/yt/plan', {
+      const res = await fetch('/yt/plan', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({

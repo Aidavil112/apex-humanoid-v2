@@ -80,6 +80,7 @@ export const App: React.FC = () => {
   const [liveVoiceStage, setLiveVoiceStage] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [liveUserText, setLiveUserText] = useState<string>('');
   const [liveBotText, setLiveBotText] = useState<string>('');
+  const [liveQuickInput, setLiveQuickInput] = useState<string>('');
   const [micLevel, setMicLevel] = useState<number>(0);
   const [langMode, setLangMode] = useState<'en-IN' | 'hi-IN'>('hi-IN');
   const liveSpeakingRef = useRef<boolean>(false);
@@ -196,6 +197,7 @@ export const App: React.FC = () => {
   const cancelAllSpeech = useCallback(() => {
     speechSeqRef.current += 1;
     liveSpeakingRef.current = false;
+    busyRef.current = false;
     audio.stopVoiceBuffer();
     clearTimeout(greetTimerRef.current);
     clearInterval(ttsPulseRef.current);
@@ -353,11 +355,10 @@ export const App: React.FC = () => {
     (m: MoodType, msg: string) => {
       setMood(m);
       activeSentimentRef.current = m;
-      toast(msg, 3500);
-      audio.heartThump(true);
-      speak(msg);
+      // Silent UI toast ONLY — never spam/interrupt user's voice conversation with trading announcements!
+      toast(msg, 3000);
     },
-    [setMood, toast, speak]
+    [setMood, toast]
   );
 
   const autoTrader = useAutoTrader({
@@ -404,11 +405,11 @@ export const App: React.FC = () => {
       }
 
       // Trading bot direct voice/text trigger
-      if (/\b(trading bot|crypto bot|algo bot|open bot|trade bot|trading)\b/i.test(text)) {
+      if (/\b(open trading|open trade|trading kholo)\b/i.test(text)) {
         setTradingBotOpen(true);
         setMood('excited');
-        const botReply = 'Opening Algorithmic Trading Bot. Core particles synchronized with virtual heart rate and market pulse.';
-        toast(botReply, 4000);
+        const botReply = 'Trading terminal khol diya hai.';
+        toast(botReply, 3000);
         speak(botReply, () => {
           busyRef.current = false;
         });
@@ -488,14 +489,13 @@ export const App: React.FC = () => {
         return;
       }
 
-      // Ask real live AI brain directly (instant Hinglish conversational mode!)
+      // Ask real live AI brain directly — pure natural human conversation (ZERO unsolicited trading chatter!)
       try {
         setLiveUserText(text);
         setLiveVoiceStage('thinking');
         const t0 = performance.now();
-        const acctNow = autoTraderRef.current.liveAccount;
         const chatBody = JSON.stringify({
-          text: `${text}\n[Context: User real CoinDCX balance ₹${acctNow.totalInr.toFixed(2)}, Spot INR ₹${acctNow.spotInr.toFixed(2)}, Auto-Trade: ${autoTraderRef.current.autoTrading ? 'ON' : 'OFF'}]`,
+          text,
           voiceMode: true,
           history: chatMemRef.current,
           model: deepMode ? 'gemini-3.8-flash' : undefined,
@@ -529,8 +529,10 @@ export const App: React.FC = () => {
 
   const startEars = useCallback(async () => {
     audio.ensureCtx();
+    busyRef.current = false;
+    liveSpeakingRef.current = false;
     setLiveUserText('');
-    setLiveBotText('');
+    setLiveBotText('Haan dost, boliye — main sun raha hoon!');
 
     let stream: MediaStream | null = null;
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -539,194 +541,132 @@ export const App: React.FC = () => {
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
         micStreamRef.current = stream;
-        audio.connectMicStream(stream);
       } catch (err) {
         toast('⚠️ Phone me Microphone permission Allow karein!');
         setIsListening(false);
         return;
       }
+    } else {
+      toast('⚠️ Is browser me Microphone uplabdh nahi hai');
+      setIsListening(false);
+      return;
     }
 
     setIsListening(true);
     setLiveVoiceStage('listening');
     setMood('listening');
-    toast('📞 Live Call Connected — boliye, main sun raha hoon!');
-    speak('Haan boliye, main live sun raha hoon!');
+    toast('📞 Live Call Connected — ab normal aawaz me boliye!', 3200);
 
-    let nativeFiredRecently = false;
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SR) {
-      try {
-        const r = new SR();
-        r.lang = langMode;
-        r.interimResults = true;
-        r.continuous = true;
-        r.maxAlternatives = 1;
+    // Pure single-owner 16kHz PCM WAV capture -> Single-roundtrip /voice-turn (ZERO Android SpeechRecognition conflict!)
+    const flushNow = await audio.startLivePcmCapture(stream, {
+      isMutedGate: () => liveSpeakingRef.current || busyRef.current || !poweredOnRef.current,
+      onLevel: (lvl) => setMicLevel(lvl),
+      onUtteranceWav: async (wavBuf) => {
+        if (!poweredOnRef.current || !micStreamRef.current || busyRef.current) return;
+        busyRef.current = true;
+        setLiveVoiceStage('thinking');
+        setMood('thinking');
 
-        r.onresult = (e: any) => {
-          if (liveSpeakingRef.current || busyRef.current) return;
-          let interimTxt = '';
-          let finalTxt = '';
-          for (let i = e.resultIndex; i < e.results.length; i++) {
-            const t = e.results[i][0].transcript;
-            if (e.results[i].isFinal) finalTxt += t;
-            else interimTxt += t;
-          }
-          if (interimTxt.trim()) {
-            nativeFiredRecently = true;
-            setLiveUserText(interimTxt.trim());
-          }
-          if (finalTxt.trim()) {
-            nativeFiredRecently = true;
-            const now = Date.now();
-            if (now - lastSubmitRef.current.time > 1200 || finalTxt !== lastSubmitRef.current.text) {
-              lastSubmitRef.current = { time: now, text: finalTxt };
-              setLiveUserText(finalTxt.trim());
-              handleUtterance(finalTxt.trim());
-            }
-          }
-        };
+        // Safety watchdog: never allow busyRef to stay stuck if mobile data drops
+        const watchdog = setTimeout(() => {
+          busyRef.current = false;
+          liveSpeakingRef.current = false;
+          if (micStreamRef.current) setLiveVoiceStage('listening');
+        }, 14000);
 
-        r.onend = () => {
-          if (recRef.current && micStreamRef.current) {
-            try {
-              r.start();
-            } catch {}
-          }
-        };
-
-        recRef.current = r;
-        r.start();
-      } catch {}
-    }
-
-    // Universal Cloud Whisper VAD Engine (works in Chrome Custom Tabs, WebViews, Safari & noisy rooms!)
-    if (stream && typeof MediaRecorder !== 'undefined') {
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/mp4')
-        ? 'audio/mp4'
-        : '';
-      let chunks: BlobPart[] = [];
-      let speakingDetected = false;
-      let silenceTicks = 0;
-      let totalSpeechTicks = 0;
-
-      const startRecorderCycle = () => {
-        if (!micStreamRef.current) return;
-        chunks = [];
-        speakingDetected = false;
-        silenceTicks = 0;
-        totalSpeechTicks = 0;
         try {
-          const rec = mimeType ? new MediaRecorder(stream!, { mimeType }) : new MediaRecorder(stream!);
-          mediaRecRef.current = rec;
-          rec.ondataavailable = (ev) => {
-            if (ev.data && ev.data.size > 0) chunks.push(ev.data);
-          };
-          rec.onstop = async () => {
-            const hadSpeech = speakingDetected;
-            const captured = chunks;
-            chunks = [];
+          const acctNow = autoTraderRef.current.liveAccount;
+          const walletSummary = `Aapke CoinDCX wallet me total ${acctNow.totalInr.toFixed(2)} rupay hain, Spot INR ${acctNow.spotInr.toFixed(2)} rupay hai.`;
+          const res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/voice-turn', {
+            method: 'POST',
+            headers: {
+              'content-type': 'audio/wav',
+              'x-voice-history': encodeURIComponent(JSON.stringify(chatMemRef.current.slice(-6))),
+              'x-wallet-context': encodeURIComponent(walletSummary),
+            },
+            body: wavBuf,
+          });
+          const j = await res.json();
+          clearTimeout(watchdog);
+
+          if (!j?.ok || j?.empty || !j?.heard) {
+            busyRef.current = false;
             if (micStreamRef.current) {
-              startRecorderCycle();
+              setLiveVoiceStage('listening');
+              setMood('listening');
             }
-            if (!hadSpeech || captured.length === 0 || nativeFiredRecently || liveSpeakingRef.current || busyRef.current) {
-              nativeFiredRecently = false;
-              return;
-            }
-            const blob = new Blob(captured, { type: mimeType || 'audio/webm' });
-            if (blob.size < 1800) return;
-            try {
-              setLiveVoiceStage('thinking');
-              const buf = await blob.arrayBuffer();
-              const sttRes = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/stt', {
-                method: 'POST',
-                headers: { 'content-type': blob.type || 'audio/webm' },
-                body: buf,
-              });
-              const sttJson = await sttRes.json();
-              const heard = String(sttJson?.text || '').trim();
-              if (heard.length > 1 && !liveSpeakingRef.current && !busyRef.current) {
-                const now = Date.now();
-                if (now - lastSubmitRef.current.time > 1200) {
-                  lastSubmitRef.current = { time: now, text: heard };
-                  setLiveUserText(heard);
-                  toast(`🎤 "${heard}"`, 2500);
-                  handleUtterance(heard);
-                  return;
+            return;
+          }
+
+          setLiveUserText(j.heard);
+          setLiveBotText(j.reply);
+          toast(`🎤 "${j.heard}"`, 2600);
+
+          if (j.action === 'AUTOTRADE_ON') autoTraderRef.current.setAutoTrading(true);
+          if (j.action === 'AUTOTRADE_OFF') autoTraderRef.current.setAutoTrading(false);
+
+          chatMemRef.current.push({ role: 'user', text: j.heard });
+          chatMemRef.current.push({ role: 'model', text: j.reply });
+          while (chatMemRef.current.length > 8) chatMemRef.current.shift();
+
+          // Play pre-synthesized HD voice immediately over WebAudio -> ZERO extra network wait!
+          if (j.audioBase64) {
+            const binStr = atob(j.audioBase64);
+            const raw = new Uint8Array(binStr.length);
+            for (let i = 0; i < binStr.length; i++) raw[i] = binStr.charCodeAt(i);
+            const ok = await audio.playVoiceArrayBuffer(
+              raw.buffer,
+              () => {
+                liveSpeakingRef.current = true;
+                setLiveVoiceStage('speaking');
+                setMood('speaking');
+                if (engineRef.current) engineRef.current.voiceTarget = 1.0;
+              },
+              () => {
+                liveSpeakingRef.current = false;
+                busyRef.current = false;
+                if (engineRef.current) engineRef.current.voiceTarget = 0.12;
+                if (micStreamRef.current && poweredOnRef.current) {
+                  setLiveVoiceStage('listening');
+                  setMood('listening');
                 }
               }
-              if (!liveSpeakingRef.current) setLiveVoiceStage('listening');
-            } catch {
-              if (!liveSpeakingRef.current) setLiveVoiceStage('listening');
-            }
-          };
-          rec.start(250);
-        } catch {}
-      };
+            );
+            if (ok) return;
+          }
 
-      startRecorderCycle();
-
-      sendChunkNowRef.current = () => {
-        if (mediaRecRef.current && mediaRecRef.current.state === 'recording') {
-          speakingDetected = true;
-          nativeFiredRecently = false;
-          try {
-            mediaRecRef.current.stop();
-          } catch {}
-        }
-      };
-
-      clearInterval(vadTimerRef.current);
-      vadTimerRef.current = setInterval(() => {
-        if (!micStreamRef.current) return;
-        const pureLvl = audio.micRms();
-        setMicLevel(pureLvl);
-        if (liveSpeakingRef.current || busyRef.current) {
-          speakingDetected = false;
-          silenceTicks = 0;
-          totalSpeechTicks = 0;
-          chunks = [];
-          return;
-        }
-        if (pureLvl > 0.028) {
-          speakingDetected = true;
-          totalSpeechTicks += 1;
-          silenceTicks = 0;
-        } else if (speakingDetected) {
-          silenceTicks += 1;
-          // ~700ms pause after real speech (or max 8.5s utterance) -> send straight to Whisper!
-          if ((silenceTicks >= 7 && totalSpeechTicks >= 2) || totalSpeechTicks >= 85) {
-            if (mediaRecRef.current && mediaRecRef.current.state === 'recording') {
-              try {
-                mediaRecRef.current.stop();
-              } catch {}
-            }
+          // Fallback TTS if audioBase64 empty
+          speak(j.reply, () => {
+            busyRef.current = false;
+          });
+        } catch (err) {
+          clearTimeout(watchdog);
+          busyRef.current = false;
+          liveSpeakingRef.current = false;
+          if (micStreamRef.current) {
+            setLiveVoiceStage('listening');
+            setMood('listening');
           }
         }
-      }, 100);
-    }
-  }, [langMode, toast, setMood, handleUtterance]);
+      },
+    });
+
+    sendChunkNowRef.current = flushNow;
+    speak('Haan dost, bolo! Main sun raha hoon.', () => {
+      busyRef.current = false;
+      liveSpeakingRef.current = false;
+      setLiveVoiceStage('listening');
+      setMood('listening');
+    });
+  }, [toast, setMood, speak]);
 
   const stopEars = useCallback(() => {
     clearInterval(vadTimerRef.current);
     vadTimerRef.current = null;
     sendChunkNowRef.current = null;
-    if (mediaRecRef.current) {
-      try {
-        mediaRecRef.current.onstop = null;
-        if (mediaRecRef.current.state !== 'inactive') mediaRecRef.current.stop();
-      } catch {}
-      mediaRecRef.current = null;
-    }
-    if (recRef.current) {
-      const old = recRef.current;
-      recRef.current = null;
-      try {
-        old.stop();
-      } catch (e) {}
-    }
+    busyRef.current = false;
+    liveSpeakingRef.current = false;
+    setMicLevel(0);
     if (micStreamRef.current) {
       try {
         micStreamRef.current.getTracks().forEach((track) => track.stop());
@@ -1178,11 +1118,11 @@ export const App: React.FC = () => {
       engineRef.current.started = true;
       engineRef.current.setPaused(false);
     }
-    // Greet user on enter (cancelled immediately if user switches OFF)
+    // Clean friendly greeting WITHOUT unsolicited trading chatter!
     clearTimeout(greetTimerRef.current);
     greetTimerRef.current = setTimeout(() => {
       if (!poweredOnRef.current) return;
-      speak('Namaste! Main APEX humanoid hoon. Ask me anything or open the trading bot.');
+      speak('Namaste! Main APEX hoon. Neeche Live Call daba kar mujhse seedha baat karo.');
     }, 400);
   };
 
@@ -1293,6 +1233,33 @@ export const App: React.FC = () => {
               🤖 APEX: {liveBotText}
             </div>
           )}
+
+          {/* Direct quick voice-reply text bar inside Call HUD as instant backup */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const q = liveQuickInput.trim();
+              if (!q) return;
+              setLiveQuickInput('');
+              cancelAllSpeech();
+              handleUtterance(q);
+            }}
+            className="flex items-center gap-1.5 pt-1"
+          >
+            <input
+              type="text"
+              value={liveQuickInput}
+              onChange={(e) => setLiveQuickInput(e.target.value)}
+              placeholder="Boliye ya yahan likh kar bhejein…"
+              className="flex-1 bg-[#061523] border border-[rgba(79,210,255,0.28)] rounded-lg px-2.5 py-1 text-[11px] text-white placeholder-[#5e859e] focus:outline-none focus:border-[#00f5a0]"
+            />
+            <button
+              type="submit"
+              className="cursor-pointer px-2.5 py-1 rounded-lg bg-[#00f5a0] text-[#041a12] text-[10.5px] font-extrabold"
+            >
+              ➤
+            </button>
+          </form>
         </div>
       )}
 
