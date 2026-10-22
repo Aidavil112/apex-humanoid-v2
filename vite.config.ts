@@ -6,7 +6,7 @@ import tailwindcss from '@tailwindcss/vite';
 // (https://<user>.github.io/<repo>/) without touching the source.
 //   npm run build                     -> base "/"      (Render, Docker, any root host)
 //   PAGES_BASE=/apex-humanoid-v2/ npm run build  -> sub-path build
-const base = process.env.PAGES_BASE || '/';
+const base = process.env.PAGES_BASE || './';
 
 export default defineConfig({
   base,
