@@ -85,11 +85,26 @@ export const App: React.FC = () => {
   const [photoMode, setPhotoMode] = useState(false);
 
   // Modals
-  const [youtubeOpen, setYoutubeOpen] = useState(false);
+  const [youtubeOpen, setYoutubeOpen] = useState(() => {
+    const h = window.location.hash || '';
+    return h.includes('youtube') || h.includes('yt_token=');
+  });
   const [askOpen, setAskOpen] = useState(false);
   const [reelOpen, setReelOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
+
+  useEffect(() => {
+    const h = window.location.hash || '';
+    if (h.includes('yt_token=')) {
+      const m = h.match(/yt_token=([^&]+)/);
+      if (m?.[1]) {
+        localStorage.setItem('apex.yt_token', decodeURIComponent(m[1]));
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        setYoutubeOpen(true);
+      }
+    }
+  }, []);
 
   // Gesture Smoothing & Sensitivity State
   const [gestureSmoothing, setGestureSmoothingState] = useState<number>(() => {

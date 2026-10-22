@@ -25,6 +25,10 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
   const [scenesCount, setScenesCount] = useState(6);
   const [privacyStatus, setPrivacyStatus] = useState<'public' | 'unlisted' | 'private'>('public');
   const [accessToken, setAccessToken] = useState(() => localStorage.getItem('apex.yt_token') || '');
+  const [ytChannelName, setYtChannelName] = useState<string>('');
+  const [ytServerConnected, setYtServerConnected] = useState<boolean>(false);
+  const [ytChecking, setYtChecking] = useState<boolean>(false);
+  const [showConnectSteps, setShowConnectSteps] = useState<boolean>(false);
 
   // Workflow Agent State
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStep>('idle');
@@ -54,9 +58,45 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const busyRef = useRef(false);
 
+  const verifyYouTubeConnection = async (tokOverride?: string) => {
+    const tok = tokOverride !== undefined ? tokOverride.trim() : accessToken.trim();
+    setYtChecking(true);
+    try {
+      const r = await hubFetch('/yt/status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ accessToken: tok }),
+      });
+      const j = await r.json();
+      if (j?.connected) {
+        setYtServerConnected(true);
+        setYtChannelName(j.channelTitle || 'YouTube Channel Ready');
+        setShowConnectSteps(false);
+        return true;
+      } else {
+        setYtServerConnected(false);
+        setYtChannelName('');
+        if (tok && j?.expired) {
+          onToast('⚠️ YouTube token expire ho gaya — naya token paste karein');
+        }
+        return false;
+      }
+    } catch {
+      return false;
+    } finally {
+      setYtChecking(false);
+    }
+  };
+
   useEffect(() => {
     localStorage.setItem('apex.yt_token', accessToken);
   }, [accessToken]);
+
+  useEffect(() => {
+    if (isOpen) {
+      verifyYouTubeConnection();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     try {
@@ -624,49 +664,112 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
         {/* 1. AUTOPILOT AGENT VIEW */}
         {tab === 'autopilot' && (
           <div className="flex flex-col gap-4">
-            {/* YouTube OAuth Connection Banner */}
-            <div className="p-3.5 rounded-xl bg-[rgba(10,24,34,0.85)] border border-[rgba(79,210,255,0.25)] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">{accessToken ? '🟢' : '🔴'}</span>
-                  <span className="text-xs font-bold text-[#eaf9ff]">
-                    YouTube Channel Status: {accessToken ? 'Connected for Auto-Upload' : 'OAuth Token Needed for Direct Upload'}
-                  </span>
+            {/* YouTube OAuth 2-Tap Mobile Connection Card */}
+            <div className="p-3.5 rounded-xl bg-[rgba(10,24,34,0.92)] border border-[rgba(79,210,255,0.3)] flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{ytServerConnected ? '🟢' : '🔴'}</span>
+                    <span className="text-xs font-bold text-[#eaf9ff]">
+                      {ytServerConnected
+                        ? `YouTube Connected: ${ytChannelName}`
+                        : 'YouTube Channel Connect Karein (Direct Upload)'}
+                    </span>
+                  </div>
+                  <div className="text-[10.5px] text-[#7fb0cc] mt-0.5">
+                    {ytServerConnected
+                      ? '✅ Ab "LAUNCH FULL AUTO-PILOT" dabate hi video seedha aapke YouTube Channel par upload hoga!'
+                      : 'Neeche "🔗 Connect YouTube" button dabao — bina Client ID ke 30 sec me jud jayega!'}
+                  </div>
                 </div>
-                <div className="text-[10px] text-[#6393b0] mt-0.5">
-                  Scopes Provisioned: <code className="text-[#4fd2ff]">youtube.upload</code>, <code className="text-[#4fd2ff]">youtube.readonly</code>
+
+                <div className="flex flex-wrap gap-2">
+                  {!ytServerConnected ? (
+                    <button
+                      onClick={async () => {
+                        setShowConnectSteps(true);
+                        try {
+                          await navigator.clipboard.writeText(
+                            'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly'
+                          );
+                          onToast('✅ Scope automatically copy ho gaya! Ab Google page me Paste karke Authorize dabao.');
+                        } catch {}
+                        window.open('https://developers.google.com/oauthplayground/', '_blank', 'noopener,noreferrer');
+                      }}
+                      className="cursor-pointer px-3.5 py-2 bg-gradient-to-r from-[#d91e36] to-[#ff3b5c] hover:brightness-110 text-white font-extrabold text-xs rounded-lg shadow-[0_0_16px_rgba(255,59,92,0.4)]"
+                    >
+                      🔗 1-Tap Connect YouTube (Copy Scope &amp; Open Google)
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => {
+                        setAccessToken('');
+                        setYtServerConnected(false);
+                        setYtChannelName('');
+                        onToast('YouTube Token Disconnected');
+                      }}
+                      className="cursor-pointer text-[10.5px] text-[#ff6b6b] underline hover:text-[#ff8f8f]"
+                    >
+                      Disconnect
+                    </button>
+                  )}
                 </div>
               </div>
 
-              {!accessToken ? (
-                <div className="flex gap-2 w-full sm:w-auto">
-                  <input
-                    type="password"
-                    value={accessToken}
-                    onChange={(e) => setAccessToken(e.target.value)}
-                    placeholder="Paste OAuth Token..."
-                    className="bg-[#050c12] border border-[#1d3a4d] rounded-lg px-2.5 py-1.5 text-xs text-[#d8f2ff] w-full sm:w-40 focus:outline-none focus:border-[#4fd2ff]"
-                  />
-                  <button
-                    onClick={() => {
-                      if (accessToken.trim()) onToast('YouTube OAuth Token Saved!');
-                      else onToast('Please enter your Google OAuth token');
-                    }}
-                    className="cursor-pointer whitespace-nowrap px-3 py-1.5 bg-[#1877f2] hover:bg-[#166fe5] text-white font-bold text-xs rounded-lg shadow-sm"
-                  >
-                    Save
-                  </button>
+              {(showConnectSteps || !ytServerConnected) && (
+                <div className="p-3 rounded-lg bg-[#050c12] border border-[#1d3a4d] space-y-2 text-[11px] text-[#cfeefa]">
+                  <div className="text-[#ffd13b] font-semibold">
+                    📲 3 Easy Taps: (1) Upar Red button dabao (Scope copy ho jayega) → (2) Google page ke khali box me Paste karke blue "Authorize APIs" → "Exchange authorization code for tokens" dabao → (3) "ya29..." token copy karke neeche Paste &amp; Save dabao!
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="text"
+                      value={accessToken}
+                      onChange={(e) => setAccessToken(e.target.value)}
+                      placeholder="ya29.a0... YouTube Access Token yahan paste karein"
+                      className="bg-[#091622] border border-[#28526e] rounded-lg px-3 py-2 text-xs text-white flex-1 focus:outline-none focus:border-[#00f5a0]"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={async () => {
+                          try {
+                            const clip = (await navigator.clipboard.readText()).trim();
+                            if (clip) {
+                              setAccessToken(clip);
+                              const ok = await verifyYouTubeConnection(clip);
+                              onToast(ok ? '🎉 YouTube Channel Connected!' : 'Token saved — checking...');
+                            } else {
+                              onToast('Box me token long-press karke Paste karein');
+                            }
+                          } catch {
+                            onToast('Box me long-press karke Paste dabao phir Connect dabao');
+                          }
+                        }}
+                        className="cursor-pointer px-3 py-2 bg-[#16344a] hover:bg-[#1f4765] text-[#8fe0ff] font-bold text-xs rounded-lg border border-[#2d5d7e]"
+                      >
+                        📋 Paste
+                      </button>
+                      <button
+                        disabled={ytChecking}
+                        onClick={async () => {
+                          if (!accessToken.trim()) {
+                            onToast('Pehle ya29... token paste karein');
+                            return;
+                          }
+                          const ok = await verifyYouTubeConnection(accessToken.trim());
+                          onToast(
+                            ok
+                              ? '🎉 YouTube Channel 100% Connected! Ab Auto-Pilot chala sakte ho!'
+                              : '⚠️ Ye valid Google OAuth token nahi hai (ya29... copy karein)'
+                          );
+                        }}
+                        className="cursor-pointer whitespace-nowrap px-4 py-2 bg-[#00f5a0] hover:bg-[#00d68c] text-[#031810] font-extrabold text-xs rounded-lg"
+                      >
+                        {ytChecking ? 'Checking…' : '✅ Connect'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => {
-                    setAccessToken('');
-                    onToast('YouTube Access Token Disconnected');
-                  }}
-                  className="cursor-pointer text-[10.5px] text-[#ff6b6b] underline hover:text-[#ff8f8f]"
-                >
-                  Disconnect Token
-                </button>
               )}
             </div>
 

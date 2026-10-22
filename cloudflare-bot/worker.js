@@ -1117,6 +1117,44 @@ export default {
       }
     }
 
+    // ---- Check & Verify Live YouTube Connection Status (/yt/status) ----
+    if (url.pathname === '/yt/status') {
+      const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
+      try {
+        const token = await resolveYouTubeAccessToken(env, body?.accessToken);
+        if (!token) return jsonRes({ ok: true, connected: false });
+
+        let channelTitle = '';
+        let email = '';
+        try {
+          const chRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (chRes.ok) {
+            const chJson = await chRes.json();
+            const item = chJson?.items?.[0];
+            if (item?.snippet?.title) channelTitle = item.snippet.title;
+          }
+        } catch {}
+
+        const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(token)}`);
+        if (!infoRes.ok && !channelTitle) {
+          return jsonRes({ ok: true, connected: false, expired: true, error: 'Token expired — click Refresh / Quick Connect' });
+        }
+        const infoJson = await infoRes.json().catch(() => ({}));
+        email = infoJson?.email || '';
+        return jsonRes({
+          ok: true,
+          connected: true,
+          channelTitle: channelTitle || email || 'YouTube Channel Ready',
+          expiresIn: Number(infoJson?.expires_in || 3600),
+          permanent: Boolean(env.YOUTUBE_REFRESH_TOKEN),
+        });
+      } catch (e) {
+        return jsonRes({ ok: false, connected: false, error: e.message });
+      }
+    }
+
     // ---- 1-Click Google OAuth for Permanent YouTube Channel Auto-Upload ----
     if (request.method === 'GET' && url.pathname === '/yt/auth') {
       const clientId = String(env.YOUTUBE_CLIENT_ID || '').trim();
@@ -1176,7 +1214,7 @@ export default {
           <textarea readonly style="width:100%;height:90px;padding:10px;border-radius:8px;background:#0c1824;color:#4fd2ff;border:1px solid #2b4c63;font-family:monospace">${esc(j.refresh_token || 'Already issued — revoke app access & retry if empty')}</textarea>
           <p style="margin-top:14px">Turant abhi app me upload test karne ke liye ye temporary <code>Access Token</code> bhi use kar sakte ho:</p>
           <textarea readonly style="width:100%;height:70px;padding:10px;border-radius:8px;background:#0c1824;color:#9ff5c8;border:1px solid #2b4c63;font-family:monospace">${esc(j.access_token || '')}</textarea>
-          <p style="margin-top:16px"><a href="${esc(env.APP_URL || 'https://aidavil112.github.io/apex-humanoid-v2/')}" style="display:inline-block;padding:12px 18px;background:#2ef2a4;color:#041a12;font-weight:700;border-radius:10px;text-decoration:none">🚀 Open APEX Studio &amp; Auto-Upload Now</a></p>
+          <p style="margin-top:16px"><a href="${esc((env.APP_URL || 'https://aidavil112.github.io/apex-humanoid-v2/') + '#yt_token=' + encodeURIComponent(j.access_token || ''))}" style="display:inline-block;padding:12px 18px;background:#2ef2a4;color:#041a12;font-weight:700;border-radius:10px;text-decoration:none">🚀 Open APEX Studio &amp; Auto-Upload Now (Auto-Connected!)</a></p>
         </body>`,
         { headers: { 'content-type': 'text/html; charset=utf-8' } }
       );
