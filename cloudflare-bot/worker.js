@@ -373,6 +373,7 @@ async function callGoogleEndpoint(url, key, body) {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(5000),
   });
   const txt = await r.text();
   let j = null;
@@ -414,36 +415,22 @@ async function askBrain(env, text, history = [], sysPrompt = SYSTEM_PROMPT, maxT
       })),
       { role: 'user', parts: [{ text }] },
     ];
-    const payload = { contents, generationConfig: { temperature: 0.8, maxOutputTokens: Math.max(maxTokens, 2048) } };
-
-    for (const m of ['gemini-2.5-flash', 'gemini-flash-latest']) {
-      try {
-        const res = await callGoogleEndpoint(
-          `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
-          cleanKey,
-          payload
-        );
-        if (res.ok) {
-          const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-          if (out.trim()) return { text: out.trim(), engine: `gemini:${m}` };
-        }
-        if (res.status === 401 || res.status === 403) break;
-      } catch {}
-    }
-
-    for (const m of ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash']) {
-      try {
-        const res = await callGoogleEndpoint(
-          `https://aiplatform.googleapis.com/v1/publishers/google/models/${m}:generateContent`,
-          cleanKey,
-          payload
-        );
-        if (res.ok) {
-          const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
-          if (out.trim()) return { text: out.trim(), engine: `vertex:${m}` };
-        }
-      } catch {}
-    }
+    const payload = { contents, generationConfig: { temperature: 0.75, maxOutputTokens: Math.max(maxTokens, 1800) } };
+    const urls = [
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      'https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent',
+    ];
+    try {
+      const winner = await Promise.any(
+        urls.map(async (u) => {
+          const res = await callGoogleEndpoint(u, cleanKey, payload);
+          const out = (res.json?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
+          if (!res.ok || !out) throw new Error(`HTTP ${res.status}`);
+          return { text: out, engine: u.includes('aiplatform') ? 'vertex:gemini-2.5-flash' : 'gemini:gemini-2.5-flash' };
+        })
+      );
+      if (winner?.text) return winner;
+    } catch {}
   }
   return await askWorkersAI(env, text, history, sysPrompt, maxTokens);
 }
