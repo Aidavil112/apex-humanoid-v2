@@ -26,6 +26,15 @@ services:
         sync: false
       - key: COINDCX_API_SECRET
         sync: false
+      # Telegram bot
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHATS
+        sync: false
+      - key: APP_URL
+        sync: false
       # Play Store / TWA — Digital Asset Links
       - key: ANDROID_PACKAGE_NAME
         sync: false

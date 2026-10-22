@@ -29,3 +29,6 @@ twa/*.aab
 twa/*.apk
 twa/*.log
 .bubblewrap/
+
+# static (GitHub Pages) build output
+dist-pages/

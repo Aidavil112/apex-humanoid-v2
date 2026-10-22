@@ -39,6 +39,11 @@ export const App: React.FC = () => {
   // UI state
   const [entered, setEntered] = useState(false);
   const [poweredOn, setPoweredOn] = useState(false);
+  const poweredOnRef = useRef<boolean>(false);
+  const speechSeqRef = useRef<number>(0);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsPulseRef = useRef<any>(null);
+  const greetTimerRef = useRef<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [mood, setMoodState] = useState<MoodType>('idle');
   const [themeIdx, setThemeIdx] = useState(0);
@@ -164,8 +169,35 @@ export const App: React.FC = () => {
     [voices]
   );
 
+  /** Immediately halts all browser SpeechSynthesis, active server TTS audio, and pending speech timers. */
+  const cancelAllSpeech = useCallback(() => {
+    speechSeqRef.current += 1;
+    clearTimeout(greetTimerRef.current);
+    clearInterval(ttsPulseRef.current);
+    ttsPulseRef.current = null;
+    if (ttsAudioRef.current) {
+      try {
+        ttsAudioRef.current.onplay = null;
+        ttsAudioRef.current.onended = null;
+        ttsAudioRef.current.onerror = null;
+        ttsAudioRef.current.pause();
+        ttsAudioRef.current.src = '';
+      } catch (e) {}
+      ttsAudioRef.current = null;
+    }
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+    if (engineRef.current) {
+      engineRef.current.voiceTarget = 0;
+    }
+  }, []);
+
   const playServerVoice = useCallback(
-    async (text: string, onEnd?: () => void) => {
+    async (text: string, seq: number, onEnd?: () => void) => {
+      if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
       try {
         const res = await fetch('/yt/voice', {
           method: 'POST',
@@ -173,24 +205,37 @@ export const App: React.FC = () => {
           body: JSON.stringify({ text, voice: langMode === 'hi-IN' ? 'Puck' : 'Kore' }),
         });
         if (!res.ok) throw new Error('Voice fetch status ' + res.status);
+        if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
         const blob = await res.blob();
+        if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
         const url = URL.createObjectURL(blob);
         const audioEl = new Audio(url);
+        ttsAudioRef.current = audioEl;
 
-        let pulseInterval: any = null;
         audioEl.onplay = () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) {
+            audioEl.pause();
+            return;
+          }
           audio.ensureCtx();
           if (engineRef.current) engineRef.current.voiceTarget = 1.0;
-          pulseInterval = setInterval(() => {
+          clearInterval(ttsPulseRef.current);
+          ttsPulseRef.current = setInterval(() => {
+            if (!poweredOnRef.current || seq !== speechSeqRef.current) {
+              clearInterval(ttsPulseRef.current);
+              return;
+            }
             audio.triggerVoicePulse(0.9);
             if (engineRef.current) engineRef.current.voiceTarget = 0.8 + Math.random() * 0.4;
           }, 120);
         };
 
         audioEl.onended = () => {
-          clearInterval(pulseInterval);
+          clearInterval(ttsPulseRef.current);
+          if (ttsAudioRef.current === audioEl) ttsAudioRef.current = null;
           if (engineRef.current) engineRef.current.voiceTarget = 0.15;
           URL.revokeObjectURL(url);
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           activeSentimentRef.current = null;
           setSentimentInfo(null);
           setMood('idle');
@@ -198,8 +243,11 @@ export const App: React.FC = () => {
         };
 
         audioEl.onerror = () => {
-          clearInterval(pulseInterval);
+          clearInterval(ttsPulseRef.current);
+          if (ttsAudioRef.current === audioEl) ttsAudioRef.current = null;
+          URL.revokeObjectURL(url);
           if (engineRef.current) engineRef.current.voiceTarget = 0.15;
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           activeSentimentRef.current = null;
           setSentimentInfo(null);
           setMood('idle');
@@ -217,6 +265,10 @@ export const App: React.FC = () => {
 
   const speak = useCallback(
     (text: string, onEnd?: () => void) => {
+      if (!poweredOnRef.current) return;
+      const seq = speechSeqRef.current + 1;
+      cancelAllSpeech();
+      speechSeqRef.current = seq;
       audio.ensureCtx();
 
       if (!activeSentimentRef.current || activeSentimentRef.current === 'idle') {
@@ -226,7 +278,6 @@ export const App: React.FC = () => {
       }
 
       if ('speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
         try {
           window.speechSynthesis.resume();
         } catch (e) {}
@@ -242,12 +293,17 @@ export const App: React.FC = () => {
         let spoke = false;
 
         u.onstart = () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) {
+            window.speechSynthesis.cancel();
+            return;
+          }
           spoke = true;
           audio.ensureCtx();
           audio.triggerVoicePulse(1.0);
         };
 
         u.onboundary = () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           if (engineRef.current) {
             engineRef.current.voiceTarget = 1.0;
           }
@@ -255,10 +311,12 @@ export const App: React.FC = () => {
         };
 
         u.onend = () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           if (engineRef.current) {
             engineRef.current.voiceTarget = 0.15;
           }
           setTimeout(() => {
+            if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
             activeSentimentRef.current = null;
             setSentimentInfo(null);
             setMood('idle');
@@ -267,9 +325,10 @@ export const App: React.FC = () => {
         };
 
         u.onerror = async () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           console.warn('Web speech error, falling back to server TTS');
-          const ok = await playServerVoice(text, onEnd);
-          if (!ok) {
+          const ok = await playServerVoice(text, seq, onEnd);
+          if (!ok && poweredOnRef.current && seq === speechSeqRef.current) {
             activeSentimentRef.current = null;
             setSentimentInfo(null);
             setMood('idle');
@@ -280,18 +339,19 @@ export const App: React.FC = () => {
 
         // Fallback if browser SpeechSynthesis gets stuck without firing onstart
         setTimeout(async () => {
+          if (!poweredOnRef.current || seq !== speechSeqRef.current) return;
           if (!spoke && !window.speechSynthesis.speaking) {
-            const ok = await playServerVoice(text, onEnd);
-            if (!ok) {
+            const ok = await playServerVoice(text, seq, onEnd);
+            if (!ok && poweredOnRef.current && seq === speechSeqRef.current) {
               setMood('idle');
             }
           }
         }, 600);
       } else {
-        playServerVoice(text, onEnd);
+        playServerVoice(text, seq, onEnd);
       }
     },
-    [voiceFor, langMode, setMood, playServerVoice]
+    [voiceFor, langMode, setMood, playServerVoice, cancelAllSpeech]
   );
 
   const handleTradeBurst = useCallback(
@@ -318,6 +378,7 @@ export const App: React.FC = () => {
   );
 
   const autoTrader = useAutoTrader({
+    enabled: entered && poweredOn,
     currentMood: mood,
     currentHeartRate: heartRate,
     onTriggerSentimentTrade: handleTriggerSentimentTrade,
@@ -650,32 +711,44 @@ export const App: React.FC = () => {
     }
   }, [gestureActive, startGesture, stopGesture, toast]);
 
-  // Master Power
+  // Master Power (1-click FULL ON / FULL OFF)
   const togglePower = useCallback(() => {
-    audio.ensureCtx();
-    if (!poweredOn) {
+    if (!poweredOnRef.current) {
+      poweredOnRef.current = true;
       setPoweredOn(true);
-      audio.powerUp();
-      if (!soundOn) {
-        setSoundOn(true);
-        audio.setSound(true);
+      audio.powerOn(soundOn, sfxOn);
+      if (engineRef.current) {
+        engineRef.current.assemble = 0;
+        engineRef.current.setPaused(false);
       }
-      if (!sfxOn) {
-        setSfxOn(true);
-        audio.setSfx(true);
-      }
-      if (!isListening) startEars();
-      toast('Systems online · AI voice & trading bot active', 3000);
+      audio.assemble();
+      toast('APEX ON · Systems active', 2400);
     } else {
+      // HARD FULL OFF — stop every subsystem immediately
+      poweredOnRef.current = false;
       setPoweredOn(false);
-      if (isListening) stopEars();
-      if (gestureActive) stopGesture();
-      setSoundOn(false);
-      audio.setSound(false);
-      setMood('idle');
-      toast('Systems resting', 2000);
+      cancelAllSpeech();
+      busyRef.current = false;
+      activeSentimentRef.current = null;
+      setSentimentInfo(null);
+      if (isListening || recRef.current || micStreamRef.current) stopEars();
+      if (gestureActive || gestureStreamRef.current) stopGesture();
+      audio.powerOff();
+      if (engineRef.current) {
+        engineRef.current.setPaused(true);
+      }
+      setMoodState('idle');
+      setFps(0);
+      setMenuOpen(false);
+      setYoutubeOpen(false);
+      setAskOpen(false);
+      setReelOpen(false);
+      setTradingBotOpen(false);
+      setAgentCompanyOpen(false);
+      clearTimeout(toastTimerRef.current);
+      setToastMessage(null);
     }
-  }, [poweredOn, soundOn, sfxOn, gestureActive, isListening, startGesture, stopGesture, startEars, stopEars, toast, setMood]);
+  }, [soundOn, sfxOn, gestureActive, isListening, stopGesture, stopEars, cancelAllSpeech, toast]);
 
   // Characters
   const cycleCharacter = useCallback(() => {
@@ -771,7 +844,7 @@ export const App: React.FC = () => {
     }
   }, [toast]);
 
-  // Initialize WebGL engine once canvases are ready
+  // Initialize WebGL engine once canvases are ready (kept alive across power toggles for instant wake)
   useEffect(() => {
     if (!canvasRef.current || !hudCanvasRef.current) return;
     try {
@@ -785,29 +858,47 @@ export const App: React.FC = () => {
         setHeartPulse(pulse);
         setIsElevated(elevated);
       };
+      engine.setPaused(true);
       engineRef.current = engine;
 
-      let animId: number;
-      const render = (time: number) => {
-        engine.frame(time);
-        animId = requestAnimationFrame(render);
-      };
-      animId = requestAnimationFrame(render);
-
       return () => {
-        cancelAnimationFrame(animId);
         engine.destroy();
+        engineRef.current = null;
       };
     } catch (e) {
       console.error('WebGL engine startup error', e);
     }
   }, []);
 
-  // Pointer follow listener
+  // Run GPU render loop ONLY when entered AND powered ON (0 FPS / 0% GPU when FULL OFF)
   useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (!entered || !poweredOn) {
+      engine.setPaused(true);
+      setFps(0);
+      return;
+    }
+    engine.started = true;
+    engine.setPaused(false);
+    let animId: number;
+    const render = (time: number) => {
+      if (!poweredOnRef.current) return;
+      engine.frame(time);
+      animId = requestAnimationFrame(render);
+    };
+    animId = requestAnimationFrame(render);
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [entered, poweredOn]);
+
+  // Pointer follow listener (active only while powered ON)
+  useEffect(() => {
+    if (!entered || !poweredOn) return;
     const handlePointerMove = (e: PointerEvent) => {
       hideHint();
-      if (!engineRef.current) return;
+      if (!engineRef.current || !poweredOnRef.current) return;
       const nx = (e.clientX / window.innerWidth - 0.5) * 2;
       const ny = (e.clientY / window.innerHeight - 0.5) * 2;
       engineRef.current.targetYaw = nx * 0.62;
@@ -815,7 +906,7 @@ export const App: React.FC = () => {
     };
 
     const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches[0] && engineRef.current) {
+      if (e.touches[0] && engineRef.current && poweredOnRef.current) {
         const nx = (e.touches[0].clientX / window.innerWidth - 0.5) * 2;
         const ny = (e.touches[0].clientY / window.innerHeight - 0.5) * 2;
         engineRef.current.targetYaw = nx * 0.62;
@@ -829,15 +920,17 @@ export const App: React.FC = () => {
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('touchmove', handleTouchMove);
     };
-  }, [hideHint]);
+  }, [entered, poweredOn, hideHint]);
 
-  // Remote state poller (/state)
+  // Remote state poller (/state) — completely stopped when FULL OFF
   useEffect(() => {
+    if (!entered || !poweredOn) return;
     let lastSeq = -1;
     const interval = setInterval(async () => {
+      if (!poweredOnRef.current) return;
       try {
         const r = await fetch('/state');
-        if (!r.ok) return;
+        if (!r.ok || !poweredOnRef.current) return;
         const st = await r.json();
         if (lastSeq < 0) {
           lastSeq = st.seq;
@@ -859,12 +952,18 @@ export const App: React.FC = () => {
     }, 1500);
 
     return () => clearInterval(interval);
-  }, [setMood, toast, speak]);
+  }, [entered, poweredOn, setMood, toast, speak]);
 
   // Keyboard controls
   useEffect(() => {
+    if (!entered) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'p' || e.key === 'P') {
+        togglePower();
+        return;
+      }
+      if (!poweredOnRef.current) return;
       if (e.key === '1') setMood('idle');
       if (e.key === '2') setMood('listening');
       if (e.key === '3') setMood('thinking');
@@ -912,226 +1011,244 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setMood, cycleTheme, toggleGesture, cycleCharacter, replayAssembly, toast]);
+  }, [entered, togglePower, setMood, cycleTheme, toggleGesture, cycleCharacter, replayAssembly, toast]);
 
   const handleEnter = () => {
+    poweredOnRef.current = true;
     setEntered(true);
-    audio.ensureCtx();
+    setPoweredOn(true);
+    audio.powerOn(soundOn, sfxOn);
     audio.assemble();
     if (engineRef.current) {
       engineRef.current.started = true;
+      engineRef.current.setPaused(false);
     }
-    // Greet user on enter
-    setTimeout(() => {
+    // Greet user on enter (cancelled immediately if user switches OFF)
+    clearTimeout(greetTimerRef.current);
+    greetTimerRef.current = setTimeout(() => {
+      if (!poweredOnRef.current) return;
       speak('Namaste! Main APEX humanoid hoon. Ask me anything or open the trading bot.');
     }, 400);
   };
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none">
+    <div className="relative w-full h-full overflow-hidden select-none bg-black">
       {/* 3D WebGL Canvas Layer */}
-      <div className="fixed inset-0 pointer-events-none">
+      <div className={entered && poweredOn ? 'fixed inset-0 pointer-events-none' : 'fixed inset-0 pointer-events-none invisible'}>
         <canvas ref={canvasRef} className="w-full h-full pointer-events-auto cursor-crosshair" />
         {/* w-full h-full is required: a <canvas> is a replaced element, so inset-0 alone
             keeps its intrinsic (attribute) pixel size and overflows small screens. */}
         <canvas ref={hudCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
       </div>
 
-      {/* Cyberpunk Vignette & Floor Glow */}
-      <div className="veil" />
-      <div className="floor" />
+      {/* Pure pitch-black screen when FULL OFF */}
+      {entered && !poweredOn && <div data-testid="power-off-blackout" className="fixed inset-0 z-30 bg-black" />}
 
-      {/* HUD Overlay (Clean view, unobstructing humanoid) */}
-      <HudOverlay
-        mood={mood}
-        fps={fps}
-        points={points}
-        gestureActive={gestureActive}
-        gestureCanvasRef={gestureCanvasRef}
-        showHint={showHint}
-        themeAccent={THEMES[themeIdx].accent}
-        sentiment={sentimentInfo}
-        heartRate={heartRate}
-        heartPulse={heartPulse}
-        isElevated={isElevated}
-      />
+      {entered && poweredOn && (
+        <>
+          {/* Cyberpunk Vignette & Floor Glow */}
+          <div className="veil" />
+          <div className="floor" />
 
-      {/* Visual Audio Waveform Overlay (Reacts to mic input and synthesized voice) */}
-      <AudioWaveform
-        mood={mood}
-        isListening={isListening}
-        themeAccent={THEMES[themeIdx].accent}
-      />
+          {/* HUD Overlay (Clean view, unobstructing humanoid) */}
+          <HudOverlay
+            mood={mood}
+            fps={fps}
+            points={points}
+            gestureActive={gestureActive}
+            gestureCanvasRef={gestureCanvasRef}
+            showHint={showHint}
+            themeAccent={THEMES[themeIdx].accent}
+            sentiment={sentimentInfo}
+            heartRate={heartRate}
+            heartPulse={heartPulse}
+            isElevated={isElevated}
+          />
 
-      {/* Bottom Floating Dock */}
-      <Dock
-        poweredOn={poweredOn}
-        menuOpen={menuOpen}
-        isListening={isListening}
-        onTogglePower={togglePower}
-        onToggleMenu={() => {
-          audio.ensureCtx();
-          audio.tick(0.6);
-          setMenuOpen((prev) => !prev);
-        }}
-        onToggleMic={toggleMic}
-        onTestVoice={testVoice}
-      />
+          {/* Visual Audio Waveform Overlay (Reacts to mic input and synthesized voice) */}
+          <AudioWaveform
+            mood={mood}
+            isListening={isListening}
+            themeAccent={THEMES[themeIdx].accent}
+          />
+        </>
+      )}
 
-      {/* Slide-up Menu Drawer */}
-      <MenuSheet
-        isOpen={menuOpen}
-        currentMood={mood}
-        onSelectMood={(m) => {
-          activeSentimentRef.current = null;
-          setSentimentInfo(null);
-          setMood(m);
-          setMenuOpen(false);
-        }}
-        gestureActive={gestureActive}
-        onToggleGesture={toggleGesture}
-        characters={ALL_AVATARS}
-        currentCharIdx={charIdx}
-        onCycleCharacter={cycleCharacter}
-        photoMode={photoMode}
-        onPhotoUpload={handlePhotoUpload}
-        onExitPhoto={exitPhoto}
-        onReplay={replayAssembly}
-        onOpenAsk={() => {
-          setMenuOpen(false);
-          setAskOpen(true);
-        }}
-        onVoiceTest={testVoice}
-        deepMode={deepMode}
-        onToggleDeep={() => {
-          setDeepMode((prev) => {
-            const next = !prev;
-            toast(next ? 'Deep model enabled' : 'Fast flash model enabled');
-            return next;
-          });
-        }}
-        onOpenYouTube={() => {
-          setMenuOpen(false);
-          setYoutubeOpen(true);
-        }}
-        langMode={langMode}
-        onToggleLang={() => {
-          setLangMode((prev) => {
-            const next = prev === 'en-IN' ? 'hi-IN' : 'en-IN';
-            toast(`Language: ${next === 'hi-IN' ? 'Hindi' : 'English'}`);
-            return next;
-          });
-        }}
-        themes={THEMES}
-        currentThemeIdx={themeIdx}
-        onCycleTheme={cycleTheme}
-        bgOn={bgOn}
-        onToggleBg={() => {
-          setBgOn((prev) => {
-            const next = !prev;
-            if (engineRef.current) engineRef.current.bgOn = next;
-            toast(`Background ${next ? 'on' : 'off'}`);
-            return next;
-          });
-        }}
-        sfxOn={sfxOn}
-        onToggleSfx={() => {
-          setSfxOn((prev) => {
-            const next = !prev;
-            audio.setSfx(next);
-            toast(`SFX ${next ? 'on' : 'off'}`);
-            return next;
-          });
-        }}
-        soundOn={soundOn}
-        onToggleSound={() => {
-          setSoundOn((prev) => {
-            const next = !prev;
-            audio.setSound(next);
-            toast(`Ambient drone ${next ? 'on' : 'off'}`);
-            return next;
-          });
-        }}
-        gestureSmoothing={gestureSmoothing}
-        onChangeGestureSmoothing={setGestureSmoothing}
-        gestureSensitivity={gestureSensitivity}
-        onChangeGestureSensitivity={setGestureSensitivity}
-        onOpenReel={() => {
-          setMenuOpen(false);
-          setReelOpen(true);
-        }}
-        onOpenTradingBot={() => {
-          setMenuOpen(false);
-          setTradingBotOpen(true);
-        }}
-        onOpenAgentCompany={() => {
-          setMenuOpen(false);
-          setAgentCompanyOpen(true);
-        }}
-        onClose={() => setMenuOpen(false)}
-      />
+      {/* Bottom Floating Dock — stays visible both ON & FULL OFF as the master power switch */}
+      {entered && (
+        <Dock
+          poweredOn={poweredOn}
+          menuOpen={menuOpen}
+          isListening={isListening}
+          onTogglePower={togglePower}
+          onToggleMenu={() => {
+            audio.ensureCtx();
+            audio.tick(0.6);
+            setMenuOpen((prev) => !prev);
+          }}
+          onToggleMic={toggleMic}
+          onTestVoice={testVoice}
+        />
+      )}
 
-      {/* Notification Toast */}
-      <Toast message={toastMessage} />
+      {entered && poweredOn && (
+        <>
+          {/* Slide-up Menu Drawer */}
+          <MenuSheet
+            isOpen={menuOpen}
+            currentMood={mood}
+            onSelectMood={(m) => {
+              activeSentimentRef.current = null;
+              setSentimentInfo(null);
+              setMood(m);
+              setMenuOpen(false);
+            }}
+            gestureActive={gestureActive}
+            onToggleGesture={toggleGesture}
+            characters={ALL_AVATARS}
+            currentCharIdx={charIdx}
+            onCycleCharacter={cycleCharacter}
+            photoMode={photoMode}
+            onPhotoUpload={handlePhotoUpload}
+            onExitPhoto={exitPhoto}
+            onReplay={replayAssembly}
+            onOpenAsk={() => {
+              setMenuOpen(false);
+              setAskOpen(true);
+            }}
+            onVoiceTest={testVoice}
+            deepMode={deepMode}
+            onToggleDeep={() => {
+              setDeepMode((prev) => {
+                const next = !prev;
+                toast(next ? 'Deep model enabled' : 'Fast flash model enabled');
+                return next;
+              });
+            }}
+            onOpenYouTube={() => {
+              setMenuOpen(false);
+              setYoutubeOpen(true);
+            }}
+            langMode={langMode}
+            onToggleLang={() => {
+              setLangMode((prev) => {
+                const next = prev === 'en-IN' ? 'hi-IN' : 'en-IN';
+                toast(`Language: ${next === 'hi-IN' ? 'Hindi' : 'English'}`);
+                return next;
+              });
+            }}
+            themes={THEMES}
+            currentThemeIdx={themeIdx}
+            onCycleTheme={cycleTheme}
+            bgOn={bgOn}
+            onToggleBg={() => {
+              setBgOn((prev) => {
+                const next = !prev;
+                if (engineRef.current) engineRef.current.bgOn = next;
+                toast(`Background ${next ? 'on' : 'off'}`);
+                return next;
+              });
+            }}
+            sfxOn={sfxOn}
+            onToggleSfx={() => {
+              setSfxOn((prev) => {
+                const next = !prev;
+                audio.setSfx(next);
+                toast(`SFX ${next ? 'on' : 'off'}`);
+                return next;
+              });
+            }}
+            soundOn={soundOn}
+            onToggleSound={() => {
+              setSoundOn((prev) => {
+                const next = !prev;
+                audio.setSound(next);
+                toast(`Ambient drone ${next ? 'on' : 'off'}`);
+                return next;
+              });
+            }}
+            gestureSmoothing={gestureSmoothing}
+            onChangeGestureSmoothing={setGestureSmoothing}
+            gestureSensitivity={gestureSensitivity}
+            onChangeGestureSensitivity={setGestureSensitivity}
+            onOpenReel={() => {
+              setMenuOpen(false);
+              setReelOpen(true);
+            }}
+            onOpenTradingBot={() => {
+              setMenuOpen(false);
+              setTradingBotOpen(true);
+            }}
+            onOpenAgentCompany={() => {
+              setMenuOpen(false);
+              setAgentCompanyOpen(true);
+            }}
+            onClose={() => setMenuOpen(false)}
+          />
 
-      {/* Autonomous AI Trading Bot Modal (Auto-Trade & Auto-Analysis) */}
-      <TradingBotModal
-        isOpen={tradingBotOpen}
-        onClose={() => setTradingBotOpen(false)}
-        currentHeartRate={heartRate}
-        pairs={autoTrader.pairs}
-        selectedPairIndex={autoTrader.selectedPairIndex}
-        onSelectPairIndex={autoTrader.setSelectedPairIndex}
-        autoTrading={autoTrader.autoTrading}
-        onToggleAutoTrading={() => autoTrader.setAutoTrading((v) => !v)}
-        balance={autoTrader.balance}
-        positions={autoTrader.positions}
-        tradeLogs={autoTrader.tradeLogs}
-        analysisFeed={autoTrader.analysisFeed}
-        strategy={autoTrader.strategy}
-        onChangeStrategy={autoTrader.setStrategy}
-        onManualBuy={autoTrader.manualBuy}
-        onManualSell={autoTrader.manualSell}
-        onTriggerSentimentTrade={handleTriggerSentimentTrade}
-      />
+          {/* Notification Toast */}
+          <Toast message={toastMessage} />
 
-      {/* YouTube Shorts & Content Studio Modal */}
-      <YouTubeModal
-        isOpen={youtubeOpen}
-        onClose={() => setYoutubeOpen(false)}
-        onToast={toast}
-      />
+          {/* Autonomous AI Trading Bot Modal (Auto-Trade & Auto-Analysis) */}
+          <TradingBotModal
+            isOpen={tradingBotOpen}
+            onClose={() => setTradingBotOpen(false)}
+            currentHeartRate={heartRate}
+            pairs={autoTrader.pairs}
+            selectedPairIndex={autoTrader.selectedPairIndex}
+            onSelectPairIndex={autoTrader.setSelectedPairIndex}
+            autoTrading={autoTrader.autoTrading}
+            onToggleAutoTrading={() => autoTrader.setAutoTrading((v) => !v)}
+            balance={autoTrader.balance}
+            positions={autoTrader.positions}
+            tradeLogs={autoTrader.tradeLogs}
+            analysisFeed={autoTrader.analysisFeed}
+            strategy={autoTrader.strategy}
+            onChangeStrategy={autoTrader.setStrategy}
+            onManualBuy={autoTrader.manualBuy}
+            onManualSell={autoTrader.manualSell}
+            onTriggerSentimentTrade={handleTriggerSentimentTrade}
+          />
 
-      {/* Instagram Reel Showcase Modal */}
-      <ReelModal
-        isOpen={reelOpen}
-        onClose={() => setReelOpen(false)}
-        onSelectTopicForShorts={(suggestedTopic) => {
-          setYoutubeOpen(true);
-        }}
-        onOpenAgentCompany={() => {
-          setReelOpen(false);
-          setAgentCompanyOpen(true);
-        }}
-        onToast={toast}
-      />
+          {/* YouTube Shorts & Content Studio Modal */}
+          <YouTubeModal
+            isOpen={youtubeOpen}
+            onClose={() => setYoutubeOpen(false)}
+            onToast={toast}
+          />
 
-      {/* Chief of Staff & Multi-Agent AI Company Command Center */}
-      <AgentCompanyModal
-        isOpen={agentCompanyOpen}
-        onClose={() => setAgentCompanyOpen(false)}
-        onSelectTopicForShorts={(suggestedTopic) => {
-          setYoutubeOpen(true);
-        }}
-        onToast={toast}
-      />
+          {/* Instagram Reel Showcase Modal */}
+          <ReelModal
+            isOpen={reelOpen}
+            onClose={() => setReelOpen(false)}
+            onSelectTopicForShorts={(suggestedTopic) => {
+              setYoutubeOpen(true);
+            }}
+            onOpenAgentCompany={() => {
+              setReelOpen(false);
+              setAgentCompanyOpen(true);
+            }}
+            onToast={toast}
+          />
 
-      {/* Ask Question Modal */}
-      <AskModal
-        isOpen={askOpen}
-        onClose={() => setAskOpen(false)}
-        onSubmit={handleUtterance}
-      />
+          {/* Chief of Staff & Multi-Agent AI Company Command Center */}
+          <AgentCompanyModal
+            isOpen={agentCompanyOpen}
+            onClose={() => setAgentCompanyOpen(false)}
+            onSelectTopicForShorts={(suggestedTopic) => {
+              setYoutubeOpen(true);
+            }}
+            onToast={toast}
+          />
+
+          {/* Ask Question Modal */}
+          <AskModal
+            isOpen={askOpen}
+            onClose={() => setAskOpen(false)}
+            onSubmit={handleUtterance}
+          />
+        </>
+      )}
 
       {/* Initial Entry Gate */}
       {!entered && <IntroGate onEnter={handleEnter} />}
