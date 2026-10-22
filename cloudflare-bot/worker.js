@@ -69,7 +69,10 @@ async function callGoogleEndpoint(url, key, body) {
   return { ok: r.ok, status: r.status, json: j, errMsg: j?.error?.message || txt.slice(0, 140) };
 }
 
-async function askFreeFallbackAI(text, history = []) {
+async function askWorkersAI(env, text, history = []) {
+  if (!env.AI || typeof env.AI.run !== 'function') {
+    throw new Error('Workers AI binding unavailable');
+  }
   const messages = [
     { role: 'system', content: SYSTEM_PROMPT },
     ...history.slice(-8).map((h) => ({
@@ -78,16 +81,21 @@ async function askFreeFallbackAI(text, history = []) {
     })),
     { role: 'user', content: text },
   ];
-  const r = await fetch('https://text.pollinations.ai/openai', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ model: 'openai', messages }),
-  });
-  if (!r.ok) throw new Error(`fallback HTTP ${r.status}`);
-  const j = await r.json();
-  const out = j?.choices?.[0]?.message?.content || '';
-  if (!out.trim()) throw new Error('empty fallback reply');
-  return out.trim();
+  const models = [
+    '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    '@cf/meta/llama-3.1-8b-instruct',
+  ];
+  let lastErr = '';
+  for (const m of models) {
+    try {
+      const res = await env.AI.run(m, { messages, max_tokens: 450, temperature: 0.7 });
+      const out = typeof res?.response === 'string' ? res.response : '';
+      if (out.trim()) return { text: out.trim(), engine: m };
+    } catch (e) {
+      lastErr = e.message;
+    }
+  }
+  throw new Error(lastErr || 'Workers AI empty');
 }
 
 async function askBrain(env, text, history = []) {
@@ -140,9 +148,8 @@ async function askBrain(env, text, history = []) {
     }
   }
 
-  // 3) Automatic zero-key AI fallback so the bot NEVER goes silent!
-  const freeReply = await askFreeFallbackAI(text, history);
-  return { text: freeReply, engine: 'apex-free-ai' };
+  // 3) Native Cloudflare Workers AI binding (Llama 3.3 70B / 3.1 8B — 100% free & zero API key!)
+  return await askWorkersAI(env, text, history);
 }
 
 // Lightweight in-memory history (per Worker isolate) + optional KV persistence
@@ -357,6 +364,32 @@ export default {
       return new Response(renderSetupPage(env, url.origin, null), {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
+    }
+
+    // ---- CORS /chat endpoint for the APEX 3D Humanoid web app too! ----
+    if (request.method === 'OPTIONS' && url.pathname === '/chat') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-allow-headers': 'content-type',
+        },
+      });
+    }
+    if (request.method === 'POST' && url.pathname === '/chat') {
+      try {
+        const body = await request.json();
+        const out = await askBrain(env, String(body?.text || 'Hello').slice(0, 1000), Array.isArray(body?.history) ? body.history : []);
+        return new Response(JSON.stringify({ ok: true, text: out.text, model: out.engine }), {
+          headers: { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' },
+        });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, error: e.message }), {
+          status: 500,
+          headers: { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' },
+        });
+      }
     }
 
     // ---- Telegram webhook receiver (await full completion so Cloudflare never drops reply!) ----
