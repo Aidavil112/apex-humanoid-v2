@@ -1368,7 +1368,7 @@ export const App: React.FC = () => {
 
   const buildLiveBrainPrompt = useCallback(() => {
     try {
-      return buildBrainPrompt(900);
+      return buildBrainPrompt(1200);
     } catch {
       return '';
     }

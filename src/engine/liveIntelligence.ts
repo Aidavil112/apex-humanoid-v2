@@ -222,7 +222,7 @@ export async function askFastLiveBrain(opts: {
     askTrade ? `4. Live CoinDCX Account Data: ${opts.walletSummary}` : '',
     // 📚 v6.6.1: pehle sirf memories[0] jaata tha (1 note) → ab poora persistent BRAIN FILE
     opts.memories.length ? `5. User Notes: ${opts.memories.slice(0, 6).join(' | ')}` : '',
-    buildBrainPrompt(1500) ? `6. ${buildBrainPrompt(1500)}` : '',
+    buildBrainPrompt(2200) ? `6. ${buildBrainPrompt(2200)}` : '',
   ]
     .filter(Boolean)
     .join('\n');

@@ -28,6 +28,19 @@ export interface BrainEntry {
   kind: BrainKind;
   text: string;
   at: number;
+  /** Importance (1 = normal). RULES/blockers/guards ko zyada wajan — chhote prompt
+   *  budget me bhi yehi lines pehle jaayein, "sabse nayi" wali nahi. */
+  w: number;
+}
+
+function autoWeight(t: string): number {
+  const s = String(t || '');
+  let w = 1;
+  if (/\b(hamesha|always|never|kabhi nahi|nahi karo|nahi\b.*kar|must|strict|compulsory|rule)\b/i.test(s)) w += 1;
+  if (/[⚠️🚨🛡️🔐👑❌]/.test(s)) w += 1;
+  if (/\b(blocker|pending|revoke|deploy|missing|404|401|fail|error|band|chahiye)\b/i.test(s)) w += 1;
+  if (/\b(cap|guard|formula|limit|kill switch|threshold|slippage)\b/i.test(s)) w += 1;
+  return Math.min(5, w);
 }
 
 export interface BrainFile {
@@ -134,6 +147,7 @@ export function loadBrain(): BrainFile {
           kind: e.kind as BrainKind,
           text: trimText(e.text),
           at: Number(e.at || Date.now()),
+          w: Number(e.w) > 0 ? Number(e.w) : autoWeight(String(e.text || '')),
         })),
     };
     return out;
@@ -190,7 +204,7 @@ function addEntry(kind: BrainKind, rawText: string, onlyIfAuto: boolean): BrainE
   if (onlyIfAuto && !brain.autoWrite) return null;
   const key = `${kind}|${norm(text)}`;
   if (brain.entries.some((e) => `${e.kind}|${norm(e.text)}` === key)) return null;
-  const entry: BrainEntry = { id: nowId(), kind, text, at: Date.now() };
+  const entry: BrainEntry = { id: nowId(), kind, text, at: Date.now(), w: autoWeight(text) };
   brain.entries = [entry, ...brain.entries];
   writeBrain(brain);
   if (brain.autoSync) void syncBrainOut({ quiet: true });
@@ -213,21 +227,118 @@ export function clearBrainSection(kind?: BrainKind): BrainFile {
 // 🧪 PROMPT BLOCK — ye har AI call ke saath jaata hai
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Chhote budget me bhi sabse zaroori section pahunche: priority RULES → OPEN/PENDING
+ * (live blocker!) → DECISIONS → PROJECT → DONE LOG → NOTES. Har section ko apna char-share
+ * milta hai (varna ek lambi RULES list poora budget kha jaati hai — harness me pakda gaya),
+ * lines 130 char par trim hoti hain, aur kaat hamesha LINE boundary par (adhoori line model
+ * ko confuse karti hai). Jo lines chhoot gayi, unka count batla diya jaata hai.
+ */
+type DigestSlot = { kind: BrainKind; head: string; lines: string[]; taken: number; cap: number };
+
+function digestLine(t: string): string {
+  const one = String(t || '').replace(/\s+/g, ' ').trim();
+  return one.length > 112 ? `${one.slice(0, 111)}…` : one;
+}
+
+/** Digest me chhota section label (poora heading sirf markdown file me) — budget bachane ke liye. */
+const DIGEST_HEAD: Record<BrainKind, string> = {
+  rule: '⚖️ RULES',
+  open: '⏳ OPEN/PENDING',
+  decision: '🧠 DECISIONS',
+  project: '🏗️ PROJECT',
+  done: '✅ DONE',
+  learned: '📌 NOTES',
+};
+
+/**
+ * Budget chhote me bhi HAR section pahunche: pehle har section ki 1 line (guaranteed),
+ * phir round-robin ek-ek line — priority order RULES → OPEN/PENDING (live blocker) →
+ * DECISIONS → PROJECT → DONE LOG → NOTES me. Pehle wala version ek section ko poora
+ * budget kha jaane deta tha (harness me pakda gaya) — isliye ab round-robin.
+ * Truncation hamesha line boundary par; chhoot gayi lines ka count batla diya jaata hai.
+ */
+const DIGEST_PLAN: Array<{ kind: BrainKind; maxLines: number }> = [
+  { kind: 'rule', maxLines: 6 },
+  { kind: 'open', maxLines: 6 },
+  { kind: 'decision', maxLines: 5 },
+  { kind: 'project', maxLines: 3 },
+  { kind: 'done', maxLines: 4 },
+  { kind: 'learned', maxLines: 3 },
+];
+
 export function brainDigest(maxChars = 1700): string {
   const brain = loadBrain();
   if (!brain.entries.length) return '';
-  const parts: string[] = [];
-  for (const kind of KIND_ORDER) {
-    const list = brain.entries
+  const slots: DigestSlot[] = [];
+  for (const { kind, maxLines } of DIGEST_PLAN) {
+    const lines = brain.entries
       .filter((e) => e.kind === kind)
-      .sort((a, b) => b.at - a.at)
-      .slice(0, kind === 'done' ? 8 : 12);
-    if (!list.length) continue;
-    const lines = list.map((e) => `- ${e.text}`);
-    parts.push(`${KIND_META[kind].icon} ${KIND_META[kind].heading}\n${lines.join('\n')}`);
+      .sort((a, b) => (b.w - a.w) || (b.at - a.at))
+      .map((e) => `- ${digestLine(e.text)}`);
+    if (!lines.length) continue;
+    slots.push({ kind, head: DIGEST_HEAD[kind], lines, taken: 0, cap: Math.min(maxLines, lines.length) });
   }
-  let out = parts.join('\n');
-  if (out.length > maxChars) out = `${out.slice(0, maxChars - 1)}…`;
+  if (!slots.length) return '';
+
+  const cost = (sl: DigestSlot, n: number) => (n <= 0 ? 0 : sl.head.length + 1 + sl.lines.slice(0, n).reduce((a, l) => a + l.length + 1, 0));
+  const picked = new Map<BrainKind, string[]>();
+  let used = 0;
+
+  // 1) Breadth pehle: har section ko 1 line guaranteed (varna RULES poora budget kha jaata
+  //    hai aur DECISIONS/PROJECT khaali reh jaate hain — harness ne yahi dikha tha)
+  for (const sl of slots) {
+    const add = cost(sl, 1) + (picked.size ? 1 : 0);
+    if (used + add > maxChars) continue;
+    picked.set(sl.kind, sl.lines.slice(0, 1));
+    sl.taken = 1;
+    used += add;
+  }
+  // 2) Phir round-robin depth: har round me har section ko ek-ek line, budget/cap tak
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const sl of slots) {
+      const list = picked.get(sl.kind);
+      if (!list || sl.taken >= Math.min(sl.cap, sl.lines.length)) continue;
+      const add = cost(sl, sl.taken + 1) - cost(sl, sl.taken);
+      if (used + add > maxChars) continue;
+      list.push(sl.lines[sl.taken]);
+      sl.taken++;
+      used += add;
+      grew = true;
+    }
+  }
+  // 3) Jo section apne cap se ruke the aur line bachi hai to unhe aage bharo (phir round-robin)
+  let grew2 = true;
+  while (grew2) {
+    grew2 = false;
+    for (const sl of slots) {
+      const list = picked.get(sl.kind);
+      if (!list || sl.taken >= sl.lines.length) continue;
+      const add = cost(sl, sl.taken + 1) - cost(sl, sl.taken);
+      if (used + add > maxChars) continue;
+      list.push(sl.lines[sl.taken]);
+      sl.taken++;
+      used += add;
+      grew2 = true;
+    }
+  }
+  for (const sl of slots) if (sl.taken === 0) picked.delete(sl.kind);
+  const skipped = slots.reduce((a, sl) => a + Math.max(0, sl.lines.length - sl.taken), 0);
+  let out = slots
+    .filter((sl) => (picked.get(sl.kind) || []).length)
+    .map((sl) => `${sl.head}\n${(picked.get(sl.kind) || []).join('\n')}`)
+    .join('\n');
+  if (skipped > 0) {
+    const note = `…(+${skipped} lines budget se bahar — poori memory GitHub ke APEX-BRAIN.md me hai)`;
+    if (out.length + note.length + 1 <= maxChars) out = `${out}\n${note}`;
+  }
+  if (out.length > maxChars) {
+    const cut = out.slice(0, maxChars - 1);
+    const nl = cut.lastIndexOf('\n');
+    out = `${cut.slice(0, nl > 40 ? nl : maxChars - 1)}…`;
+  }
   return out;
 }
 
@@ -265,7 +376,7 @@ export function exportBrainMarkdown(): string {
 }
 
 export function importBrainMarkdown(md: string): { added: number; total: number } {
-  let added = 0;
+  const wanted: Array<{ kind: BrainKind; text: string }> = [];
   let kind: BrainKind = 'learned';
   for (const rawLine of String(md || '').split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -288,8 +399,23 @@ export function importBrainMarkdown(md: string): { added: number; total: number 
     if (!bullet) continue;
     const text = bullet[1].replace(/^\[[^\]]{4,20}\]\s*/, '').trim();
     if (!text || /^[(]khaali[)]$/i.test(text)) continue;
-    if (remember(kind, text)) added += 1;
+    wanted.push({ kind, text: trimText(text) });
   }
+
+  const brain = loadBrain();
+  const have = new Set(brain.entries.map((e) => `${e.kind}|${norm(e.text)}`));
+  // File ka order hi importance maana jaata hai: pehli line sabse upar dikhe, isliye
+  // timestamp ulta kr diya jaata hai (digest weight ke baad recency se sort karta hai).
+  const base = Date.now();
+  let added = 0;
+  wanted.forEach((x, i) => {
+    const key = `${x.kind}|${norm(x.text)}`;
+    if (have.has(key)) return;
+    have.add(key);
+    brain.entries.push({ id: nowId(), kind: x.kind, text: x.text, at: base + (wanted.length - i) * 1000, w: autoWeight(x.text) });
+    added += 1;
+  });
+  if (added) writeBrain(brain);
   return { added, total: loadBrain().entries.length };
 }
 
