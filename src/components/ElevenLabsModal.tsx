@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ELEVEN_VOICE_PRESETS,
   ElevenLabsConfig,
@@ -27,9 +27,25 @@ export const ElevenLabsModal: React.FC<ElevenLabsModalProps> = ({
   const [statusMsg, setStatusMsg] = useState<string>(
     initial.apiKey
       ? '✅ ElevenLabs API Key saved on this device — Direct HD Voice Active!'
-      : 'Apni ElevenLabs API Key (sk_...) yahan daalein — Free Tier key bhi 100% chalegi!'
+      : '✅ Built-in Cloud Hindi/Hinglish HD Call Voice ACTIVE hai! (Nayi key sirf tab daalein agar custom ElevenLabs studio voice chahiye)'
   );
   const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || initial.apiKey) return;
+    fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/tts-check')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.elevenlabsWorking) {
+          setStatusMsg('✅ Aapki Cloud ElevenLabs Key pehle se ACTIVE hai — yahan dobara daalne ki zaroorat nahi!');
+        } else if (d?.configured && d?.reason === 'missing_permissions') {
+          setStatusMsg(
+            'ℹ️ Aapki Cloudflare ElevenLabs key me "text_to_speech" permission OFF thi — par Built-in Hindi/Hinglish HD Call Voice 100% ACTIVE hai! Agar ElevenLabs voice chahiye to "Text to Speech = Access" wali key yahan paste karein.'
+          );
+        }
+      })
+      .catch(() => {});
+  }, [isOpen, initial.apiKey]);
 
   if (!isOpen) return null;
 

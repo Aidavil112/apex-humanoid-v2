@@ -1,0 +1,32 @@
+# ☁️ Cloudflare Worker config — APEX hub
+# ⚠️ Project ka naam WAAHI hona chahiye jo already deploy hai, warna naya worker ban jaayega.
+name = "apex-humanoid-v2"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+# 🌙 Night shift — har 10 minute me comment patrol + brain KV copy zinda rehta hai
+[triggers]
+crons = ["*/10 * * * *"]
+
+# 🔑 KV namespace — iske bina state/token save nahi honge (pehle create karna hai):
+#    npx wrangler kv namespace create APEX_KV
+#    → jo id mile woh neeche paste karo
+[[kv_namespaces]]
+binding = "APEX_KV"
+# id = "PAST_YOUR_NAMESPACE_ID_HERE"
+
+# 📦 Static assets — jo worker / par app serve karta hai.
+#    Ye line TABHI rakhein jab aap DEPLOY-NOW.sh use kar rahe ho (wo ../dist ko ./site me copy karta hai).
+#    Dashboard se sirf code paste kar rahe ho toh ye block hata dena (assets wahan se configured rehte hain).
+[assets]
+directory = "./site"
+
+# 📝 Secrets (ek-ek karke daalein, file me kabhi mat likhein):
+#   npx wrangler secret put GEMINI_API_KEY
+#   npx wrangler secret put TELEGRAM_BOT_TOKEN
+#   npx wrangler secret put TELEGRAM_OWNER_ID
+#   npx wrangler secret put COINDCX_API_KEY
+#   npx wrangler secret put COINDCX_API_SECRET
+#   npx wrangler secret put IG_GRAPH_TOKEN            # optional (app me daalna behtar)
+#   npx wrangler secret put YOUTUBE_REFRESH_TOKEN     # abhi worker par NAHI hai (health me youtubeUploadAuth:false)
+#   npx wrangler secret put APEX_BRAIN_KEY            # optional — brain KV lock

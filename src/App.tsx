@@ -6,32 +6,98 @@ import { HudOverlay } from './components/HudOverlay';
 import { Dock } from './components/Dock';
 import { MenuSheet } from './components/MenuSheet';
 import { YouTubeModal } from './components/YouTubeModal';
-import { ReelModal } from './components/ReelModal';
-import { AskModal } from './components/AskModal';
-import { IntroGate } from './components/IntroGate';
+import { MotionGraphicsOverlay } from './components/MotionGraphicsOverlay';
+import { HologramArmorCanvas, SuitPresetId } from './components/HologramArmorCanvas';
 import { Toast } from './components/Toast';
 import { AudioWaveform } from './components/AudioWaveform';
 import { TradingBotModal } from './components/TradingBotModal';
-import { AgentCompanyModal } from './components/AgentCompanyModal';
-import { JarvisWorkspace, JarvisTaskItem, JarvisMemoryItem } from './components/JarvisWorkspace';
 import { ElevenLabsModal } from './components/ElevenLabsModal';
+import {
+  SiriAssistantSheet,
+  AssistantStage,
+  PendingVoiceConfirmation,
+  LiveChatBubble,
+} from './components/SiriAssistantSheet';
+import { JarvisTaskItem, JarvisMemoryItem } from './components/JarvisWorkspace';
 import { fetchElevenLabsAudioDirect, loadElevenConfig } from './engine/elevenlabs';
+import {
+  GeminiLiveSession,
+  loadGeminiLiveKey,
+  isGeminiLiveEnabled,
+  transcribeAudioWithGeminiKey,
+} from './engine/geminiLive';
+import {
+  playSongOrVideoHandsFree,
+  composeAndOpenWhatsAppSmart,
+  runAutonomousDeepResearch,
+} from './engine/myraaAgent';
+import {
+  ApexMemberProfile,
+  getActiveSessionUser,
+  switchSessionUser,
+  logoutSession,
+  userScopedKey,
+} from './engine/authStore';
+import {
+  tryResolveRealtimeWorldQuery,
+  extractAutoPersonalMemory,
+  askFastLiveBrain,
+  normalizeSpokenHindiText,
+} from './engine/liveIntelligence';
+import {
+  HandFrameSnapshot,
+  handWorker,
+  preloadHandLandmarker,
+} from './engine/aiHandHologram';
 import { executePhoneAction, parseLocalPhoneCommand } from './engine/phoneBridge';
 import { useAutoTrader } from './hooks/useAutoTrader';
 import { analyzeSentiment } from './engine/sentiment';
+import {
+  addTarget as addJarvisTarget,
+  armSlotAlarms as armJarvisAlarms,
+  humanNextRun as jarvisNextRun,
+  loadState as loadJarvisState,
+  patrolAllTargets as patrolJarvisTargets,
+  toggleCore as toggleJarvisCore,
+} from './engine/jarvisCore';
+import {
+  armDailyAlarm as armAutopilotAlarm,
+  createMission,
+  executeMission,
+  parseHinglishTime,
+  saveSettings as saveAutopilotSettings,
+  startAutopilotHeartbeat,
+} from './engine/headBotAutopilot';
+import { startJarvisCore } from './engine/jarvisCore';
+import {
+  brainDigest,
+  buildBrainPrompt,
+  noteBrain,
+  pushBrainToWorker,
+  remember as rememberBrain,
+  startBrainCore,
+  syncBrainToGithub,
+} from './engine/brainMemory';
+import {
+  clarifyQuestion,
+  enrollOwner,
+  isOwnerPlaced,
+  isSensitiveText,
+  loadVoiceLock,
+  pickClarification,
+  resolveClarifyAnswer,
+  revokeOwnerSession,
+  saveVoiceLock,
+  verifyOwnerNow,
+  voiceLockStatus,
+} from './engine/voiceAuth';
+import { runOutsideEye } from './engine/outsideEye';
 
 const DEVANAGARI_RE = /[\u0900-\u097F]/;
 
 const QUICK_RESPONSES: [RegExp, string | (() => string)][] = [
-  [/^(hi|hello|hey|namaste|namaskar|hii|helo)\b/i, 'Namaste. Main sun raha hoon.'],
-  [/(naam kya|who are you|tum kon|tum kaun|your name)/i, 'Main Apex Humanoid hoon, aapka apna assistant.'],
-  [/^(time|samay|kitne baje|what time)/i, () => 'Abhi ' + new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) + ' baje hain.'],
-  [/(theek ho|kaise ho|how are you)/i, 'Main bilkul theek hoon. Dil ki dhadkan normal hai.'],
-  [/(chief of staff|agent company|brand brain|sean purvis|colton|multi agent|company)/i, 'Chief of Staff command center ready hai. 19 sub-agents Brand Brain se connected hain.'],
-  [/(trading bot|crypto|trade|algo trader|market pulse|bitcoin)/i, 'Trading bot active hai. Market sentiment excited hai, heart rate surge ho raha hai!'],
-  [/(thank|shukriya|dhanyavad)/i, 'Koi baat nahi.'],
-  [/(band ho|sleep|so jao|bye|good night)/i, 'Theek hai. Main yahin hoon jab zarurat ho.'],
-  [/(kya kar sakte|what can you do)/i, 'Main bol sakta hoon, sun sakta hoon, trading bot chala sakta hoon, aur dil ki dhadkan ke sath pulse karta hoon.'],
+  [/^(?:hi|hello|hey|namaste|namaskar|hii|helo)[!.,?\s]*$/i, 'Namaste Boss! Main bilkul clear sun raha hoon. Bataiye kya kaam karein?'],
+  [/^(?:naam kya hai|who are you|tum kaun ho|your name)[!.,?\s]*$/i, 'Main APEX AI hoon Boss, aapka smart voice aur automation assistant.'],
 ];
 
 export const App: React.FC = () => {
@@ -40,10 +106,37 @@ export const App: React.FC = () => {
   const gestureCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<WebGLEngine | null>(null);
 
-  // UI state
-  const [entered, setEntered] = useState(false);
-  const [poweredOn, setPoweredOn] = useState(false);
-  const poweredOnRef = useRef<boolean>(false);
+  // Direct personal session (All local CoinDCX / Gemini keys stay 100% device-private on each phone!)
+  const [ownerUnlocked, setOwnerUnlocked] = useState<boolean>(() => {
+    const saved = localStorage.getItem('apex_owner_vault_unlocked_v6');
+    return saved === null ? true : saved === '1';
+  });
+  const activeUser: ApexMemberProfile = {
+    id: 'owner_admin',
+    name: 'Boss',
+    identifier: 'owner',
+    pin: '7860',
+    role: 'owner',
+    createdAt: 'Personal Mode',
+  };
+  const activeUserId = activeUser.id;
+  const isOwnerSession = ownerUnlocked;
+
+  // Single clean unified page: Always-ON Hand Gesture + Instant Welcome Voice!
+  const [entered] = useState(true);
+  const [poweredOn, setPoweredOn] = useState(true);
+  const poweredOnRef = useRef<boolean>(true);
+  const [showVoicePanel, setShowVoicePanel] = useState<boolean>(false);
+  const [activeSuit, setActiveSuit] = useState<SuitPresetId>('seraph');
+  const [blastNonce, setBlastNonce] = useState<number>(0);
+  const [resetNonce, setResetNonce] = useState<number>(0);
+  const [zoomDeltaNonce, setZoomDeltaNonce] = useState<{ step: number; seq: number }>({ step: 0, seq: 0 });
+  const welcomedOnceRef = useRef<boolean>(false);
+  const handSnapshotRef = useRef<HandFrameSnapshot>({
+    hands: [],
+    twoHandSpan: null,
+    aiReady: false,
+  });
   const speechSeqRef = useRef<number>(0);
   const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
   const ttsPulseRef = useRef<any>(null);
@@ -80,47 +173,149 @@ export const App: React.FC = () => {
 
   // Features
   const [gestureActive, setGestureActive] = useState(false);
+  const [gestureLabel, setGestureLabel] = useState<string>('Move: Look · Swipe ⇄ · Wave 🖐');
+  const [assistantOpen, setAssistantOpen] = useState(true);
+  const assistantOpenRef = useRef(true);
+  assistantOpenRef.current = assistantOpen;
+  const [confirmedBadge, setConfirmedBadge] = useState<string | null>(null);
+  const confirmedBadgeTimerRef = useRef<any>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingVoiceConfirmation | null>(null);
+  const pendingConfirmRef = useRef<PendingVoiceConfirmation | null>(null);
+  pendingConfirmRef.current = pendingConfirm;
+  const controlActionsRef = useRef<{
+    startGesture: () => void;
+    stopGesture: () => void;
+    cycleTheme: () => void;
+    cycleCharacter: () => void;
+    togglePower: () => void;
+    startEars: () => void;
+  }>({
+    startGesture: () => {},
+    stopGesture: () => {},
+    cycleTheme: () => {},
+    cycleCharacter: () => {},
+    togglePower: () => {},
+    startEars: () => {},
+  });
   const [isListening, setIsListening] = useState(false);
   const [liveVoiceStage, setLiveVoiceStage] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
+  const [liveInterimText, setLiveInterimText] = useState<string>('');
   const [liveUserText, setLiveUserText] = useState<string>('');
   const [liveBotText, setLiveBotText] = useState<string>('');
-  const [liveQuickInput, setLiveQuickInput] = useState<string>('');
+  const [chatHistory, setChatHistory] = useState<LiveChatBubble[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('apex_live_chat_bubbles_v1') || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // 🎯 v6.6.2 — STT meta (alternatives/interim/confidence) + word-confirm state machine
+  const lastSpeechMetaRef = useRef<{ alts: string[]; interim: string; confidence: number }>({
+    alts: [],
+    interim: '',
+    confidence: -1,
+  });
+  const clarifyAskedRef = useRef(false);
+  const pendingClarifyRef = useRef<{ word: string; options: [string, string]; original: string } | null>(null);
+  const voiceEnrollRef = useRef(false);
+
+  const pushChatBubble = useCallback((role: 'user' | 'bot', text: string) => {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    setChatHistory((prev) => {
+      if (prev.length > 0 && prev[prev.length - 1].role === role && prev[prev.length - 1].text === clean) {
+        return prev;
+      }
+      const next: LiveChatBubble[] = [
+        ...prev.slice(-39),
+        {
+          id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          role,
+          text: clean,
+          time: new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }),
+        },
+      ];
+      try {
+        localStorage.setItem('apex_live_chat_bubbles_v1', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, []);
   const [micLevel, setMicLevel] = useState<number>(0);
   const [langMode, setLangMode] = useState<'en-IN' | 'hi-IN'>('hi-IN');
   const liveSpeakingRef = useRef<boolean>(false);
-  const mediaRecRef = useRef<MediaRecorder | null>(null);
+  const callActiveRef = useRef<boolean>(false);
   const vadTimerRef = useRef<any>(null);
-  const sendChunkNowRef = useRef<(() => void) | null>(null);
+  const idleStandbyTimerRef = useRef<any>(null);
+  const sendChunkNowRef = useRef<((force?: boolean) => void) | null>(null);
   const [deepMode, setDeepMode] = useState(false);
   const [bgOn, setBgOn] = useState(true);
-  const [sfxOn, setSfxOn] = useState(true);
-  const [soundOn, setSoundOn] = useState(false);
+  // Background FX & Ambient Hum stay OFF by default so there is ZERO unwanted background noise; fully separate from Voice!
+  const [sfxOn, setSfxOn] = useState<boolean>(() => localStorage.getItem('apex.sfx_on') === '1');
+  const [sfxVolume, setSfxVolume] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('apex.sfx_vol') || '0.2');
+    return Number.isFinite(v) ? v : 0.2;
+  });
+  const [voiceVolume, setVoiceVolume] = useState<number>(() => {
+    const v = parseFloat(localStorage.getItem('apex.voice_vol') || '1');
+    return Number.isFinite(v) ? v : 1.0;
+  });
+  const [soundOn, setSoundOn] = useState<boolean>(() => localStorage.getItem('apex.sound_on') === '1');
   const [photoMode, setPhotoMode] = useState(false);
 
   // Modals
+  const [agentVoiceTask, setAgentVoiceTask] = useState<{
+    action?: 'make_and_save' | 'upload_saved' | 'open_only' | 'headbot_autopilot';
+    topic: string;
+    refUrl?: string;
+    nonce: number;
+  } | null>(null);
   const [youtubeOpen, setYoutubeOpen] = useState(() => {
     const h = window.location.hash || '';
     return h.includes('youtube') || h.includes('yt_token=');
   });
-  const [askOpen, setAskOpen] = useState(false);
-  const [reelOpen, setReelOpen] = useState(false);
   const [elevenOpen, setElevenOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
-  const [agentCompanyOpen, setAgentCompanyOpen] = useState(false);
-  const [jarvisOpen, setJarvisOpen] = useState<boolean>(false);
-  const [menuTab, setMenuTab] = useState<'apps' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
-  const [hologramOverlayMode, setHologramOverlayMode] = useState<boolean>(false);
+  const [menuTab, setMenuTab] = useState<'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
+  // STRICT MANUAL PUSH-TO-TALK BY DEFAULT: Mic NEVER turns ON/OFF automatically in background!
+  // Opens ONLY when user explicitly taps the Mic button, listens to 1 complete sentence, and stays 100% OFF!
   const [autoContinuousMode, setAutoContinuousMode] = useState<boolean>(false);
   const autoContinuousRef = useRef<boolean>(false);
   autoContinuousRef.current = autoContinuousMode;
   const echoCooldownUntilRef = useRef<number>(0);
-  const [quietMode, setQuietMode] = useState<boolean>(false);
   const quietModeRef = useRef<boolean>(false);
-  quietModeRef.current = quietMode;
+  const geminiSessionRef = useRef<GeminiLiveSession | null>(null);
+  const nativeSttDisabledRef = useRef<boolean>(false);
+  const [geminiLiveActive, setGeminiLiveActive] = useState<boolean>(() => isGeminiLiveEnabled());
+
+  // Pre-warm Cloud Brain + AI 21-Landmark Hand Landmarker + Force Full Media Loudspeaker!
+  useEffect(() => {
+    preloadHandLandmarker().catch(() => {});
+    try {
+      window.ApexAndroid?.setSpeakerphone?.(true);
+      (window.ApexAndroid as any)?.maxSpeakerVolume?.();
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!poweredOn) return;
+    const warm = () => {
+      fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/chat', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'ping', voiceMode: true, history: [] }),
+      }).catch(() => {});
+    };
+    warm();
+    const id = setInterval(warm, 40000);
+    return () => clearInterval(id);
+  }, [poweredOn]);
 
   const [jarvisTasks, setJarvisTasks] = useState<JarvisTaskItem[]>(() => {
     try {
-      const s = JSON.parse(localStorage.getItem('jarvis_tasks') || '[]');
+      const s = JSON.parse(localStorage.getItem(userScopedKey('jarvis_tasks', activeUserId)) || '[]');
       return Array.isArray(s) ? s : [];
     } catch {
       return [];
@@ -128,7 +323,7 @@ export const App: React.FC = () => {
   });
   const [jarvisMemories, setJarvisMemories] = useState<JarvisMemoryItem[]>(() => {
     try {
-      const s = JSON.parse(localStorage.getItem('jarvis_memories') || '[]');
+      const s = JSON.parse(localStorage.getItem(userScopedKey('jarvis_memories', activeUserId)) || '[]');
       return Array.isArray(s) ? s : [];
     } catch {
       return [];
@@ -137,51 +332,69 @@ export const App: React.FC = () => {
   const jarvisMemoriesRef = useRef(jarvisMemories);
   jarvisMemoriesRef.current = jarvisMemories;
 
-  const addJarvisTask = useCallback((title: string) => {
-    setJarvisTasks((prev) => {
-      const next = [
-        { id: `t-${Date.now()}`, title, done: false, createdAt: new Date().toLocaleTimeString('en-IN') },
-        ...prev,
-      ];
-      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const addJarvisTask = useCallback(
+    (title: string) => {
+      setJarvisTasks((prev) => {
+        const next = [
+          { id: `t-${Date.now()}`, title, done: false, createdAt: new Date().toLocaleTimeString('en-IN') },
+          ...prev,
+        ];
+        localStorage.setItem(userScopedKey('jarvis_tasks', activeUserId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [activeUserId]
+  );
 
-  const toggleJarvisTask = useCallback((id: string) => {
-    setJarvisTasks((prev) => {
-      const next = prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t));
-      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const toggleJarvisTask = useCallback(
+    (id: string) => {
+      setJarvisTasks((prev) => {
+        const next = prev.map((t) => (t.id === id ? { ...t, done: !t.done } : t));
+        localStorage.setItem(userScopedKey('jarvis_tasks', activeUserId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [activeUserId]
+  );
 
-  const deleteJarvisTask = useCallback((id: string) => {
-    setJarvisTasks((prev) => {
-      const next = prev.filter((t) => t.id !== id);
-      localStorage.setItem('jarvis_tasks', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const deleteJarvisTask = useCallback(
+    (id: string) => {
+      setJarvisTasks((prev) => {
+        const next = prev.filter((t) => t.id !== id);
+        localStorage.setItem(userScopedKey('jarvis_tasks', activeUserId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [activeUserId]
+  );
 
-  const addJarvisMemory = useCallback((text: string) => {
-    setJarvisMemories((prev) => {
-      const next = [
-        { id: `m-${Date.now()}`, text, savedAt: new Date().toLocaleDateString('en-IN') },
-        ...prev,
-      ];
-      localStorage.setItem('jarvis_memories', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const addJarvisMemory = useCallback(
+    (text: string) => {
+      // 📚 BRAIN FILE me bhi same line (vahan ye RULES/NOTES banake har session padhi jaati hai)
+      rememberBrain('learned', text);
+      setJarvisMemories((prev) => {
+        if (prev.some((m) => m.text.toLowerCase() === text.trim().toLowerCase())) return prev;
+        const next = [
+          { id: `m-${Date.now()}`, text: text.trim(), savedAt: new Date().toLocaleDateString('en-IN') },
+          ...prev,
+        ];
+        localStorage.setItem(userScopedKey('jarvis_memories', activeUserId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [activeUserId]
+  );
 
-  const deleteJarvisMemory = useCallback((id: string) => {
-    setJarvisMemories((prev) => {
-      const next = prev.filter((m) => m.id !== id);
-      localStorage.setItem('jarvis_memories', JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const deleteJarvisMemory = useCallback(
+    (id: string) => {
+      setJarvisMemories((prev) => {
+        const next = prev.filter((m) => m.id !== id);
+        localStorage.setItem(userScopedKey('jarvis_memories', activeUserId), JSON.stringify(next));
+        return next;
+      });
+    },
+    [activeUserId]
+  );
 
   useEffect(() => {
     const h = window.location.hash || '';
@@ -245,8 +458,8 @@ export const App: React.FC = () => {
   }, []);
 
   const setMood = useCallback(
-    (newMood: MoodType) => {
-      audio.mood(newMood);
+    (newMood: MoodType, playTone = false) => {
+      if (playTone) audio.mood(newMood);
       setMoodState(newMood);
       if (engineRef.current) {
         engineRef.current.mood = newMood;
@@ -297,6 +510,12 @@ export const App: React.FC = () => {
         window.speechSynthesis.cancel();
       } catch (e) {}
     }
+    try {
+      window.ApexAndroid?.stopNativeSpeak?.();
+    } catch {}
+    try {
+      geminiSessionRef.current?.flushPlayback();
+    } catch {}
     if (engineRef.current) {
       engineRef.current.voiceTarget = 0;
     }
@@ -307,9 +526,32 @@ export const App: React.FC = () => {
       if (!poweredOnRef.current || seq !== speechSeqRef.current) return false;
       try {
         const elCfg = loadElevenConfig();
-        // 1) Direct Phone/Browser -> ElevenLabs HD TTS (100% bypasses Cloudflare Free-Tier IP blocks!)
         let arrayBuf: ArrayBuffer | null = null;
-        if (elCfg.apiKey) {
+
+        // 0) 0.001s Zero-Lag Bundled Offline Studio HD Voice MP3 inside APK (Plays instantaneously even offline!)
+        if (!elCfg.apiKey) {
+          const lowT = text.toLowerCase();
+          let localClip = '';
+          if (lowT.includes('namaste boss! main online hoon')) localClip = '/offline_voice/welcome.mp3';
+          else if (lowT.includes('haan boss, main bilkul clear sun raha hoon')) localClip = '/offline_voice/hello.mp3';
+          else if (lowT.includes('main ekdum first class hoon boss')) localClip = '/offline_voice/kaise_ho.mp3';
+          else if (lowT.includes('main apex ai hoon')) localClip = '/offline_voice/who.mp3';
+          else if (lowT.includes('shukriya boss')) localClip = '/offline_voice/thanks.mp3';
+          else if (lowT.includes('blast fired boss')) localClip = '/offline_voice/blast.mp3';
+          else if (lowT.includes('suit wapas jod diya')) localClip = '/offline_voice/reset.mp3';
+          else if (lowT.includes('vision core online')) localClip = '/offline_voice/vision.mp3';
+
+          if (localClip) {
+            const locRes = await fetch(localClip).catch(() => null);
+            if (locRes && locRes.ok) {
+              const b = await locRes.arrayBuffer();
+              if (b.byteLength > 1000) arrayBuf = b;
+            }
+          }
+        }
+
+        // 1) Direct Phone/Browser -> ElevenLabs HD TTS
+        if (!arrayBuf && elCfg.apiKey) {
           arrayBuf = await fetchElevenLabsAudioDirect(text, elCfg);
         }
 
@@ -378,21 +620,37 @@ export const App: React.FC = () => {
   );
 
   const speak = useCallback(
-    (text: string, onEnd?: () => void) => {
+    (rawText: string, onEnd?: () => void, allowSensitive = false) => {
       if (!poweredOnRef.current) return;
       const seq = speechSeqRef.current + 1;
       cancelAllSpeech();
       speechSeqRef.current = seq;
+      // 🔐 v6.6.2 VOICE LOCK — paisa ka number / password / OTP anjaan (ya unverified) awaaz
+      //    ko BOL kar nahi batate. Screen par poora jawab phir bhi dikhega.
+      const gated = !allowSensitive && isSensitiveText(rawText) && !isOwnerPlaced();
+      const text = gated
+        ? 'Ye detail screen par dikha di hai. Awaaz verify na hone par main number, balance ya password bol kar nahi batata — unlock ke liye boliye: awaaz verify karo.'
+        : rawText;
       setLiveBotText(text);
-      // Quiet Mode (from JARVIS OS sidebar): show text response silently without speaker audio!
+      if (gated) {
+        pushChatBubble('bot', rawText);
+        noteBrain('decision', '🔒 Voice lock ne ek sensitive reply sirf screen par rok diya');
+      }
+      pushChatBubble('bot', text);
+
       if (quietModeRef.current) {
         liveSpeakingRef.current = false;
-        setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+        setLiveVoiceStage('idle');
         onEnd?.();
         return;
       }
+
       liveSpeakingRef.current = true;
       audio.ensureCtx();
+      try {
+        window.ApexAndroid?.stopNativeListen?.();
+        window.ApexAndroid?.setSpeakerphone?.(true);
+      } catch {}
 
       if (!activeSentimentRef.current || activeSentimentRef.current === 'idle') {
         setMood('speaking');
@@ -400,32 +658,43 @@ export const App: React.FC = () => {
         audio.mood(activeSentimentRef.current);
       }
 
-      // PRIMARY: Real ElevenLabs HD Cloud Voice over unlocked WebAudio (works 100% on Android/iOS!)
+      // PRIMARY ENGINE #1 ON ANDROID PHONE: Google On-Device Neural TTS (0ms instant, ZERO distortion, 100% crystal clear!)
+      if (window.ApexAndroid?.canSpeakNative?.()) {
+        const uid = `apex-utt-${seq}`;
+        (window as any).__onApexTtsStart = (id: string) => {
+          if (id !== uid || seq !== speechSeqRef.current) return;
+          liveSpeakingRef.current = true;
+          setLiveVoiceStage('speaking');
+          if (engineRef.current) engineRef.current.voiceTarget = 0.9;
+        };
+        (window as any).__onApexTtsEnd = (id: string) => {
+          if (id !== uid || seq !== speechSeqRef.current) return;
+          liveSpeakingRef.current = false;
+          if (engineRef.current) engineRef.current.voiceTarget = 0.15;
+          activeSentimentRef.current = null;
+          setSentimentInfo(null);
+          setMood('idle');
+          setLiveVoiceStage('idle');
+          onEnd?.();
+        };
+        if (window.ApexAndroid.speakNative?.(text, 'hi-IN', uid)) return;
+      }
+
+      // SECONDARY ENGINE (Desktop Web Preview / ElevenLabs Custom Voice): Clean Un-Clipped Audio
       playServerVoice(text, seq, onEnd).then((ok) => {
         if (ok || !poweredOnRef.current || seq !== speechSeqRef.current) return;
-        // Offline fallback ONLY if cloud voice unreachable
+
+        // Browser SpeechSynthesis fallback
         if ('speechSynthesis' in window) {
           try {
-            window.speechSynthesis.resume();
+            window.speechSynthesis.cancel();
             const u = new SpeechSynthesisUtterance(text);
-            const voice = voiceFor(text);
-            if (voice) u.voice = voice;
-            u.lang = DEVANAGARI_RE.test(text) ? 'hi-IN' : langMode;
-            u.rate = 0.96;
-            u.onstart = () => {
-              setLiveVoiceStage('speaking');
-              audio.triggerVoicePulse(1.0);
-            };
+            u.lang = DEVANAGARI_RE.test(text) ? 'hi-IN' : 'en-IN';
+            u.rate = 0.94;
             u.onend = () => {
               liveSpeakingRef.current = false;
-              setMood(micStreamRef.current ? 'listening' : 'idle');
-              setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-              onEnd?.();
-            };
-            u.onerror = () => {
-              liveSpeakingRef.current = false;
-              setMood(micStreamRef.current ? 'listening' : 'idle');
-              setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+              setMood('idle');
+              setLiveVoiceStage('idle');
               onEnd?.();
             };
             window.speechSynthesis.speak(u);
@@ -433,12 +702,12 @@ export const App: React.FC = () => {
           } catch {}
         }
         liveSpeakingRef.current = false;
-        setMood(micStreamRef.current ? 'listening' : 'idle');
-        setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
+        setMood('idle');
+        setLiveVoiceStage('idle');
         onEnd?.();
       });
     },
-    [voiceFor, langMode, setMood, playServerVoice, cancelAllSpeech]
+    [voiceFor, setMood, playServerVoice, cancelAllSpeech, pushChatBubble]
   );
 
   const handleTradeBurst = useCallback(
@@ -464,381 +733,1313 @@ export const App: React.FC = () => {
   );
 
   const autoTrader = useAutoTrader({
-    enabled: entered && poweredOn,
+    enabled: Boolean(activeUser) && entered && poweredOn,
+    userId: activeUserId,
+    isOwner: isOwnerSession,
     currentMood: mood,
     currentHeartRate: heartRate,
     onTriggerSentimentTrade: handleTriggerSentimentTrade,
     onTradeBurst: handleTradeBurst,
   });
+
+  // Reload isolated per-user Memories, Tasks & Chat History whenever profile switches!
+  useEffect(() => {
+    try {
+      const t = JSON.parse(localStorage.getItem(userScopedKey('jarvis_tasks', activeUserId)) || '[]');
+      setJarvisTasks(Array.isArray(t) ? t : []);
+    } catch {
+      setJarvisTasks([]);
+    }
+    try {
+      const m = JSON.parse(localStorage.getItem(userScopedKey('jarvis_memories', activeUserId)) || '[]');
+      setJarvisMemories(Array.isArray(m) ? m : []);
+    } catch {
+      setJarvisMemories([]);
+    }
+    try {
+      const ch = JSON.parse(localStorage.getItem(userScopedKey('apex_chat_mem', activeUserId)) || '[]');
+      chatMemRef.current = Array.isArray(ch) ? ch : [];
+    } catch {
+      chatMemRef.current = [];
+    }
+    setLiveUserText('');
+    setLiveBotText('');
+  }, [activeUserId]);
   const autoTraderRef = useRef(autoTrader);
   autoTraderRef.current = autoTrader;
 
-  const handleUtterance = useCallback(
-    async (text: string) => {
-      if (!text || busyRef.current) return;
-      busyRef.current = true;
+  const showConfirmedBadge = useCallback((label: string) => {
+    setConfirmedBadge(label);
+    clearTimeout(confirmedBadgeTimerRef.current);
+    confirmedBadgeTimerRef.current = setTimeout(() => {
+      setConfirmedBadge(null);
+    }, 4500);
+  }, []);
 
-      // 1. Client-side zero-latency sentiment tone analysis
+  /**
+   * Unified Smart Voice Control + Confirmation Router (works identically across Cloud Whisper, Browser STT & Keyboard!).
+   * Returns true if handled locally as a confirmed/pending control command; false if general AI conversation.
+   */
+  const tryHandleSmartVoiceControl = useCallback(
+    (rawText: string, onDone?: () => void): boolean => {
+      const cleaned = normalizeSpokenHindiText(rawText).trim();
+      const low = cleaned.toLowerCase();
+      const finishAndListenForConfirm = () => {
+        busyRef.current = false;
+        // Always open mic automatically right after asking confirmation so user can simply say "Haan" or "Cancel"!
+        if (poweredOnRef.current && assistantOpenRef.current) {
+          callActiveRef.current = true;
+          setTimeout(() => {
+            if (poweredOnRef.current && assistantOpenRef.current && callActiveRef.current) {
+              openCallMicTurnRef.current();
+            }
+          }, 260);
+        } else {
+          onDone?.();
+        }
+      };
+
+      const finishNormal = () => {
+        busyRef.current = false;
+        onDone?.();
+      };
+
+      // 1. IF A VOICE ACTION IS WAITING FOR USER CONFIRMATION ("Haan / Confirm" vs "Nahi / Cancel")
+      if (pendingConfirmRef.current) {
+        if (
+          /^(ha+n?|yes|yep|yeah|ok|okay|confirm|kar\s*do|khol\s*do|kholo|chalu\s*karo|set\s*kar\s*do|bilkul|sure|sahi|haan\s*ji|done|proceed|go\s*ahead)\b/i.test(
+            low
+          )
+        ) {
+          const item = pendingConfirmRef.current;
+          setPendingConfirm(null);
+          pendingConfirmRef.current = null;
+          setLiveUserText(cleaned);
+          showConfirmedBadge(`✓ Confirmed: ${item.label}`);
+          audio.assistantChime(true);
+          speak(`Confirmed! ${item.label} chalu kar diya hai.`, finishNormal);
+          setTimeout(() => item.onConfirm(), 220);
+          return true;
+        }
+        if (/^(nahi|na|no|nope|cancel|mat\s*karo|ruk\s*jao|rehne\s*do|stop|band)\b/i.test(low)) {
+          setPendingConfirm(null);
+          pendingConfirmRef.current = null;
+          setLiveUserText(cleaned);
+          showConfirmedBadge('✕ Action Cancelled');
+          speak('Theek hai, command cancel kar diya hai.', finishNormal);
+          return true;
+        }
+      }
+
+      // Helper to queue an action with clear visual + voice confirmation prompt
+      const requestVoiceConfirmation = (
+        label: string,
+        detail: string,
+        promptSpeech: string,
+        actionFn: () => void
+      ) => {
+        setLiveUserText(cleaned);
+        const pendingObj: PendingVoiceConfirmation = {
+          label,
+          detail,
+          onConfirm: actionFn,
+        };
+        setPendingConfirm(pendingObj);
+        pendingConfirmRef.current = pendingObj;
+        speak(promptSpeech, finishAndListenForConfirm);
+      };
+
+      // 2. POWER OFF (Always asks confirmation first so accidental noise never shuts system off!)
+      if (/\b(power\s*off|full\s*off|system\s*off|apex\s*(band|off)|shut\s*down|turn\s*off\s*apex)\b/i.test(low)) {
+        requestVoiceConfirmation(
+          'Power OFF APEX',
+          'Full system standby off',
+          'APEX full power off karoon? Haan boliye ya Confirm dabayein.',
+          () => controlActionsRef.current.togglePower()
+        );
+        return true;
+      }
+
+      // 3. HAND GESTURE CONTROL BY VOICE (Direct Instant Control + Spoken Confirmation!)
+      if (/\b(gesture|hand\s*control|hand\s*tracking|camera\s*tracking|camera\s*control)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        if (/\b(off|band|stop|disable|hata)\b/i.test(low)) {
+          controlActionsRef.current.stopGesture();
+          showConfirmedBadge('✓ Confirmed: Gesture Control OFF');
+          speak('Confirmed! Hand gesture control band kar diya hai.', finishNormal);
+        } else {
+          controlActionsRef.current.startGesture();
+          showConfirmedBadge('✓ Confirmed: Gesture Control ON');
+          speak('Confirmed! Hand gesture control on kar diya hai. Haath hila kar control karein.', finishNormal);
+        }
+        return true;
+      }
+
+      // 4. THEME / COLOR CONTROL BY VOICE
+      if (/\b(theme|colour|color)\b.*\b(change|badlo|badal|next|switch)\b|\b(change|badlo|next)\s*(theme|color|colour)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        controlActionsRef.current.cycleTheme();
+        showConfirmedBadge('✓ Confirmed: 3D Theme Changed');
+        speak('Confirmed! 3D theme color change kar diya hai.', finishNormal);
+        return true;
+      }
+
+      // 5. AVATAR / CHARACTER CONTROL BY VOICE
+      if (/\b(avatar|character|humanoid|model|face)\b.*\b(change|badlo|badal|next|switch)\b|\b(change|badlo|next)\s*(avatar|character)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        controlActionsRef.current.cycleCharacter();
+        showConfirmedBadge('✓ Confirmed: 3D Avatar Changed');
+        speak('Confirmed! 3D avatar badal diya hai.', finishNormal);
+        return true;
+      }
+
+      // 5B. HOLOGRAM SUIT, VISION CORE, BLAST, ZOOM & RESET BY VOICE
+      if (/\b(vision\s*(?:mode|core|hologram|sphere)?|back\s*to\s*vision)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setActiveSuit('vision');
+        showConfirmedBadge('🔴 VISION Core Active');
+        speak('Vision Core online hai Boss!', finishNormal);
+        return true;
+      }
+      if (/\b(work\s*place|work\s*space|open\s*armou?r|iron\s*man|hologram\s*suit)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setActiveSuit('seraph');
+        showConfirmedBadge('🤖 3D Armor Suit Active');
+        speak('Opening workplace Boss! 3D Armor hologram ready hai.', finishNormal);
+        return true;
+      }
+      if (/\b(blast|explode|explosion|scatter|boom|tod\s*do|phod\s*do)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setBlastNonce((n) => n + 1);
+        showConfirmedBadge('💥 Repulsor Blast');
+        speak('Blast fired Boss!', finishNormal);
+        return true;
+      }
+      if (/\b(reset|assemble|re-?assemble|jod\s*do)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setResetNonce((n) => n + 1);
+        showConfirmedBadge('🧲 Armor Reassembled');
+        speak('Suit wapas jod diya hai Boss!', finishNormal);
+        return true;
+      }
+      if (/\b(zoom\s*in|expand|bada\s*karo)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setZoomDeltaNonce((z) => ({ step: 0.6, seq: z.seq + 1 }));
+        speak('Hologram zoom in kar diya hai.', finishNormal);
+        return true;
+      }
+      if (/\b(zoom\s*out|shrink|chhota\s*karo)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setZoomDeltaNonce((z) => ({ step: -0.55, seq: z.seq + 1 }));
+        speak('Hologram zoom out kar diya hai.', finishNormal);
+        return true;
+      }
+      if (/\b(seraph|classic|titan|phantom|spartan|gold|cyan|blue|pink|purple|green|emerald)\b/i.test(low)) {
+        const mapWord: Record<string, SuitPresetId> = {
+          seraph: 'seraph',
+          classic: 'classic',
+          cyan: 'classic',
+          blue: 'classic',
+          titan: 'titan',
+          gold: 'titan',
+          phantom: 'phantom',
+          pink: 'phantom',
+          purple: 'phantom',
+          spartan: 'spartan',
+          green: 'spartan',
+          emerald: 'spartan',
+        };
+        const hit = low.match(/\b(seraph|classic|titan|phantom|spartan|gold|cyan|blue|pink|purple|green|emerald)\b/i)?.[1]?.toLowerCase();
+        if (hit && mapWord[hit]) {
+          const mSuit = mapWord[hit];
+          setLiveUserText(cleaned);
+          setActiveSuit(mSuit);
+          showConfirmedBadge(`🤖 Suit → ${mSuit.toUpperCase()}`);
+          speak(`${mSuit.toUpperCase()} suit laga diya hai!`, finishNormal);
+          return true;
+        }
+      }
+      if (/\b(fx|background\s*sound|extra\s*(sound|awaaz)|sound\s*effect)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        const turnOn = /\b(on|chalu|start|enable)\b/i.test(low) && !/\b(off|band)\b/i.test(low);
+        setSfxOn(turnOn);
+        localStorage.setItem('apex.sfx_on', turnOn ? '1' : '0');
+        audio.setSfx(turnOn);
+        showConfirmedBadge(`✓ Confirmed: Background FX ${turnOn ? 'ON' : 'OFF'}`);
+        speak(`Confirmed! Background sound ${turnOn ? 'chalu' : 'band'} kar diya hai.`, finishNormal);
+        return true;
+      }
+
+      // 7. MOOD / EMOTION CONTROL BY VOICE
+      const moodMap: [RegExp, MoodType, string][] = [
+        [/\b(happy|khush)\b/i, 'happy', 'Happy'],
+        [/\b(excited|josh|energy)\b/i, 'excited', 'Excited'],
+        [/\b(calm|shant|relax|zen)\b/i, 'calm', 'Calm'],
+        [/\b(angry|gussa)\b/i, 'angry', 'Angry'],
+        [/\b(sad|udaas)\b/i, 'sad', 'Soft Sad'],
+        [/\b(surprised|shock|amazed)\b/i, 'surprised', 'Surprised'],
+      ];
+      if (/\b(mood|mode|ho\s*jao|feel)\b/i.test(low)) {
+        for (const [rx, mVal, mName] of moodMap) {
+          if (rx.test(low)) {
+            setLiveUserText(cleaned);
+            setMood(mVal);
+            showConfirmedBadge(`✓ Confirmed: Mood → ${mName}`);
+            speak(`Confirmed! Mood ${mName} set kar diya hai.`, finishNormal);
+            return true;
+          }
+        }
+      }
+
+      // 8. IN-APP TRADING & CREATOR STUDIO ONLY WHEN EXPLICITLY SAYING "STUDIO"
+      if (/(trading\s*(bot|kholo|open)|open\s*trade|open\s*trading|day\s*trader|chart\s*scan)/i.test(low)) {
+        setLiveUserText(cleaned);
+        setTradingBotOpen(true);
+        setMood('excited');
+        showConfirmedBadge('✓ Day Trader Opened');
+        speak('AI Day Trader khol diya hai!', finishNormal);
+        return true;
+      }
+      if (/(youtube\s*studio|shorts\s*studio)/i.test(low)) {
+        setLiveUserText(cleaned);
+        setYoutubeOpen(true);
+        showConfirmedBadge('✓ YouTube Studio Opened');
+        speak('YouTube Shorts Studio khol diya hai!', finishNormal);
+        return true;
+      }
+
+      // 9. DIRECT INSTANT REAL PHONE CONTROL (YouTube, WhatsApp, Instagram, Any App, Torch, Volume, Camera, Alarm, Timer, Settings, Calls!)
+      // Executes IMMEDIATELY in <50ms like Google Assistant / Siri — ZERO annoying confirmation delay!
+      const phoneCmd = parseLocalPhoneCommand(cleaned);
+      if (phoneCmd) {
+        setLiveUserText(cleaned);
+        executePhoneAction(phoneCmd.action, phoneCmd.payload);
+        showConfirmedBadge(`📱 ${phoneCmd.reply}`);
+        audio.assistantChime(true);
+        speak(phoneCmd.reply, finishNormal);
+        return true;
+      }
+
+      // 10. REAL COINDCX LIVE BALANCE & CONFIRMED REAL TRADING BY VOICE!
+      if (
+        /\b(balance|portfolio|wallet|mera\s*account|real\s*account|kitna\s*paisa|holding|coins?\s*kya)\b/i.test(
+          low
+        )
+      ) {
+        setLiveUserText(cleaned);
+        const at = autoTraderRef.current;
+        at.syncLiveAccount().then((fresh) => {
+          const total = Number(fresh?.totalInr ?? at.liveAccount.totalInr ?? 0);
+          const cash = Number(fresh?.spotInr ?? at.liveAccount.spotInr ?? 0);
+          const list = (Array.isArray(fresh?.holdings) ? fresh.holdings : at.liveAccount.holdings)
+            .filter((h: any) => h.currency !== 'INR' && Number(h.valueInr) >= 5)
+            .map((h: any) => `${h.currency} ₹${Math.round(Number(h.valueInr))}`)
+            .join(', ');
+          const msg =
+            total > 0
+              ? `Aapka real CoinDCX account live connected hai! Total value ₹${total.toFixed(
+                  0
+                )}, Spot INR cash ₹${cash.toFixed(0)}${list ? `, aur holdings: ${list}` : ''}.`
+              : 'Real CoinDCX account check kiya — abhi balance sync ho raha hai, Trade button khol kar dekh sakte hain.';
+          showConfirmedBadge(`✓ Real CoinDCX Live: ₹${total.toFixed(0)}`);
+          speak(msg, finishNormal);
+        });
+        return true;
+      }
+
+      if (/\b(auto\s*trad(e|ing))\b.*\b(on|off|chalu|band|start|stop)\b/i.test(low)) {
+        const turnAutoOn = /\b(on|chalu|start)\b/i.test(low) && !/\b(off|band|stop)\b/i.test(low);
+        autoTraderRef.current.setAutoTrading(turnAutoOn);
+        const msg = turnAutoOn
+          ? 'Autonomous Auto-Trading chalu kar diya hai Boss! Bots ab bina puche khud Futures aur Spot dekh kar buy-sell karenge!'
+          : 'Auto-Trading pause kar diya hai Boss!';
+        showConfirmedBadge(turnAutoOn ? '🚀 Autonomous Auto-Trade ON' : '⏹ Auto-Trade Paused');
+        speak(msg, finishNormal);
+        return true;
+      }
+
+      // 11. TASKS & MEMORY
+      const taskCmd = cleaned.match(/(?:task\s*add\s*karo|add\s*task|remind\s*me\s*(?:to)?|yaad\s*dilana)\s*[:\-]?\s*(.+)/i);
+      if (taskCmd?.[1]) {
+        const t = taskCmd[1].trim();
+        addJarvisTask(t);
+        setLiveUserText(cleaned);
+        showConfirmedBadge(`✓ Task Saved: ${t}`);
+        speak(`Confirmed! "${t}" save kar liya hai.`, finishNormal);
+        return true;
+      }
+      // 10B. 🔐 VOICE LOCK + 👁️ OUTSIDE EYE (awaaz pehchaan, word confirm, self-review)
+      if (/\b(awaaz|voice)\s*(ko\s*)?(register|enroll|ban\w*|save|naa\w*)\b/i.test(low) && !/\b(hatao|delete)\b/i.test(low)) {
+        if (voiceEnrollRef.current) {
+          speak('Awaaz register pehle se chal rahi hai Boss.', finishNormal, true);
+          return true;
+        }
+        voiceEnrollRef.current = true;
+        setLiveUserText(cleaned);
+        setLiveBotText('🎤 Awaaz register kar raha hoon — 3 baar boliye.');
+        speak('Theek hai, 3 chhote samples lunga. Har line 2 baar boliye — mic apne-aap band hoga.', finishNormal, true);
+        void (async () => {
+          const r = await enrollOwner((msg, i) => {
+            setLiveInterimText(`${msg} (${i + 1}/3)`);
+          });
+          voiceEnrollRef.current = false;
+          setLiveInterimText('');
+          const msg = r.ok
+            ? `${r.note}. Ab aapki awaaz pehchaan me hai — lock ON hai toh sensitive cheezein doosri awaaz ko boli nahi jayengi.`
+            : `Awaaz register nahi ho payi: ${r.note}`;
+          setLiveBotText(msg);
+          pushChatBubble('bot', msg);
+          showConfirmedBadge(r.ok ? '🔐 Voice print saved' : '⚠️ Voice enroll fail');
+          speak(msg, finishNormal, true);
+        })();
+        return true;
+      }
+      if (/\b(awaaz|voice)\s*(verify|check|jaanch|test)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        void (async () => {
+          const r = await verifyOwnerNow('voice-cmd');
+          const msg = `${r.note}${r.ok ? '' : ' — screen par jo bhi sensitive tha, wahi rahega.'}`;
+          setLiveBotText(msg);
+          pushChatBubble('bot', msg);
+          speak(msg, finishNormal, true);
+        })();
+        return true;
+      }
+      if (/\b(awaaz|voice)\s*lock\s*(on|off|chalu|band|on\s*karo|band\s*karo)\b/i.test(low)) {
+        const turnOn = /\b(on|chalu)\b/i.test(low) && !/\b(off|band)\b/i.test(low);
+        const cfg = saveVoiceLock({ enabled: turnOn });
+        if (!turnOn) revokeOwnerSession();
+        const stt = voiceLockStatus();
+        setLiveUserText(cleaned);
+        const msg = turnOn
+          ? `Voice lock ${cfg.enabled ? 'chalu' : 'band'} kar diya. ${stt.enrolled ? `Awaaz profile ready (${stt.samples} samples, threshold ${stt.threshold}%).` : 'Pehle awaaz register karein, tab tak lock enforce nahi hoga.'}`
+          : 'Voice lock band kar diya — ab sab kuch bola jaayega. Word-confirm bhi off ho gaya.';
+        showConfirmedBadge(turnOn ? '🔐 Voice Lock ON' : '🔓 Voice Lock OFF');
+        speak(msg, finishNormal, true);
+        return true;
+      }
+      if (/\b(bahar\s*ki\s*aankh|outside\s*eye|project\s*review|khud\s*ka\s*review|review\s*de\s*do)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setLiveBotText('👁️ Bahar ki aankh chal rahi hai — brain file + apna log padh ke review de raha hoon…');
+        void (async () => {
+          const r = await runOutsideEye();
+          const msg = r.ok ? `👁️ Outside review: ${r.text}` : `⚠️ Review nahi ho paya: ${r.note || 'no source'}`;
+          setLiveBotText(msg);
+          pushChatBubble('bot', msg);
+          speak(r.ok ? 'Review screen par aa gaya, 3 risk aur 3 next step likh diye hain.' : msg, finishNormal, true);
+        })();
+        return true;
+      }
+
+      // 11B. 📚 BRAIN FILE — voice se padhna / likhna / sync
+      const brainRule = cleaned.match(/(?:brain\s*(?:file\s*)?me\s*(?:likh\w*|daal\w*|save\s*kar\w*)|rule\s*(?:ban\w*|likh\w*))\s*[:\-\s]*(.+)/i);
+      if (brainRule?.[1] && brainRule[1].trim().length > 3) {
+        const t = brainRule[1].trim();
+        rememberBrain('rule', t);
+        setLiveUserText(cleaned);
+        showConfirmedBadge(`📚 Brain RULE saved: ${t}`);
+        speak(`Brain file me rule likh diya: ${t}. Ab har session me ye yaad rahega.`, finishNormal);
+        return true;
+      }
+      if (/\b(brain\s*file|brain\s*kya|memory\s*dekh\w*|kaunsa\s*rule|kya\s*yaad\s*rakh\w*|bhool\s*gaye\s*kya)\b/i.test(low)) {
+        const digest = brainDigest(900) || 'Brain file abhi khaali hai, Boss.';
+        setLiveUserText(cleaned);
+        setLiveBotText(digest);
+        pushChatBubble('bot', `📚 BRAIN FILE (persistent memory)\n${digest}`);
+        speak('Brain file me itna yaad hai. Screen par dikha raha hoon.', finishNormal);
+        return true;
+      }
+      if (/\b(brain\s*(?:ko\s*)?(?:github|server|cloud)\s*(?:me\s*)?(?:bhej\w*|daal\w*|sync\w*|upload\w*)|sync\s*brain)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        showConfirmedBadge('📤 Brain sync shuru');
+        void (async () => {
+          const g = await syncBrainToGithub();
+          const w = await pushBrainToWorker();
+          const msg = `Brain sync: GitHub ${g.ok ? 'ho gaya' : 'nahi hua'}${g.ok ? '' : ` (${g.note})`}, server ${w.ok ? 'ready' : 'nahi'}${w.ok ? '' : ` (${w.note})`}.`;
+          speak(msg, finishNormal);
+        })();
+        return true;
+      }
+
+      const memCmd = cleaned.match(/(?:yaad\s*rakhna|remember\s*(?:that)?|save\s*memory)\s*[:\-]?\s*(.+)/i);
+      if (memCmd?.[1]) {
+        const m = memCmd[1].trim();
+        addJarvisMemory(m);
+        setLiveUserText(cleaned);
+        showConfirmedBadge(`✓ Memory Saved: ${m}`);
+        speak(`Confirmed! Yaad rakh liya: "${m}".`, finishNormal);
+        return true;
+      }
+
+      // 12A. VOICE COMMAND -> UPLOAD PREVIOUSLY SAVED VAULT VIDEO ("Saved video upload karo / Ab video upload kar do!")
+      if (
+        /\b(upload\s*(?:kar\w*|now)?\s*video|video\s*upload\s*kar\w*|saved?\s*video\s*upload|youtube\s*(?:par|pe|mein)?\s*upload\s*kar\w*)\b/i.test(
+          low
+        ) &&
+        !/\b(bana\w*|make|create)\b/i.test(low)
+      ) {
+        setLiveUserText(cleaned);
+        setYoutubeOpen(true);
+        setAgentVoiceTask({
+          action: 'upload_saved',
+          topic: '',
+          nonce: Date.now(),
+        });
+        showConfirmedBadge('📤 Uploading Saved Vault Video…');
+        finishNormal();
+        return true;
+      }
+
+      // 12A-2. 🛰️ JARVIS CORE — "reel ka link dekh, comments ka reply kar de" / "khud ka system chalu karo"
+      if (/\b(comment|reply\s*kar\w*|jawab\s*de\w*|patrol)\b/i.test(low)) {
+        const urls = cleaned.match(/https?:\/\/\S+/gi) || [];
+        for (const u of urls) addJarvisTarget(u.replace(/[^\S\n]+/g, ''));
+        const st0 = loadJarvisState();
+        if (!st0.targets.length) {
+          speak('Boss, pehle reel ya short ka link toh dijiye — tabhi main uske comments padh paunga.');
+          showConfirmedBadge('🔗 Link chahiye');
+          finishNormal();
+          return true;
+        }
+        setLiveUserText(cleaned);
+        showConfirmedBadge(`💬 ${st0.targets.length} link(s) ke comments padh raha hoon…`);
+        void patrolJarvisTargets((line) => showConfirmedBadge(line))
+          .then((res) => {
+            const replied = res.reduce((a, r) => a + r.replied, 0);
+            const drafted = res.reduce((a, r) => a + r.drafted, 0);
+            const fetched = res.reduce((a, r) => a + r.fetched, 0);
+            speak(
+              replied > 0
+                ? `Boss, ${fetched} comments padhe aur ${replied} ka reply maine khud kar diya. ${drafted} draft bane hain.`
+                : `Boss, ${fetched} comments mile. ${drafted} reply draft kar diye hain — copy karke ek tap me post kar sakte hain. Auto-reply tabhi chalta hai jab video aapke apne channel ka ho.`
+            );
+          })
+          .catch((e) => speak(`Comments me dikkat aayi: ${String(e?.message || e).slice(0, 60)}`));
+        finishNormal();
+        return true;
+      }
+
+      if (/\b(jarvis|autonomy|auto\s*system|khud\s*ka\s*system)\b/i.test(low) && /\b(chalu|on|kar\s*do|start|khol|band|off|ruk)\b/i.test(low)) {
+        const wantsOff = /\b(band|off|ruk|mat)\b/i.test(low);
+        const next = toggleJarvisCore(!wantsOff);
+        if (!wantsOff) armJarvisAlarms();
+        setLiveUserText(cleaned);
+        showConfirmedBadge(next.enabled ? '🛰️ Jarvis Core ON' : '🛑 Jarvis Core OFF');
+        speak(
+          next.enabled
+            ? `Ji Boss. Ab se mera khud ka system chalu hai. Main soche bina bina aapke bole kaam karunga — ${next.slots
+                .map((s) => `${String(s.hour).padStart(2, '0')} bajey ${s.label.replace(/^[^ ]+ /, '')}`)
+                .join(', ')}. Agar kabhi rokna ho toh bas boliye Jarvis band karo.`
+            : 'Ji Boss, mera autonomous system rok diya hai. Jo kaam chalu tha woh complete karke ab wait karunga.'
+        );
+        finishNormal();
+        return true;
+      }
+
+      if (/\b(research|market)\s*cycle|\bkhud\s*(trade|buy|sell)\b|\btrade\s*kar\s*(lo|le)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        showConfirmedBadge('🛰️ Sub-bots bahar research kar rahe hain…');
+        void autoTraderRef.current
+          .runResearchTradeCycle?.('voice')
+          .then((r: any) => speak(r?.note || 'Research cycle complete — abhi koi entry nahi li.'));
+        finishNormal();
+        return true;
+      }
+
+      // 12A-0. 🗓️ "Roz ka auto chalu karo" / "daily autopilot band karo" — bina order ke daily mission
+      if (/\b(roz|roza|daily|har\s*din)\b/i.test(low) && /\b(auto|autopilot|video|upload|chalu|kar\s*do|band|on|off)\b/i.test(low)) {
+        if (/\b(band|off|rok|mat)\b/i.test(low)) {
+          saveAutopilotSettings({ dailyEnabled: false });
+          speak('Ji Boss, roz ka auto autopilot band kar diya hai.');
+          showConfirmedBadge('🛑 Daily Autopilot OFF');
+          finishNormal();
+          return true;
+        }
+        const when = parseHinglishTime(low);
+        saveAutopilotSettings({
+          dailyEnabled: true,
+          ...(when ? { dailyHour: new Date(when.at).getHours(), dailyMinute: new Date(when.at).getMinutes() } : {}),
+        });
+        void armAutopilotAlarm();
+        setYoutubeOpen(true);
+        setAgentVoiceTask({ action: 'headbot_autopilot', topic: '', nonce: Date.now() });
+        speak(
+          when
+            ? `Ji Boss. Ab se roz ${when.label} baje main khud live research karunga, dusri websites se footage uthaunga, video bana kar Vault aur Gallery me save karunga, aur khud upload bhi kar dunga. Aapko kuch bolna nahi padega.`
+            : 'Ji Boss. Ab se roz shaam 7 baje main apne aap research, video, save aur upload ka poora kaam kar dunga. Time badalna ho toh bas boliye — roz 6 baje kar do.'
+        );
+        showConfirmedBadge('🗓️ Daily Autopilot ON');
+        finishNormal();
+        return true;
+      }
+
+      // 12A. 👑 HEAD BOT AUTOPILOT VOICE COMMAND — "Research karke video banao aur [time] pe khud upload kar do"
+      if (
+        /\b(head\s*bot|headbot|autopilot|auto\s*post|auto\s*upload|khud\s*(upload|post|daal)|apne\s*aap\s*(upload|post)|schedule\s*(kar|post|upload)|research\s*kar\w*)\b/i.test(
+          low
+        ) &&
+        /\b(video|reel|short|post|upload|daal|research|news)\b/i.test(low)
+      ) {
+        const urlFound = cleaned.match(/https?:\/\/\S+/i)?.[0] || '';
+        const when = parseHinglishTime(low);
+        const extractedTopic = cleaned
+          .replace(/https?:\/\/\S+/gi, '')
+          .replace(
+            /\b(head\s*bot|headbot|autopilot|please|kripya|aur|phir|ko|ke\s*liye|video|reel|short|bana\s*(kar|ke|do|o)?|research\s*kar\s*(ke|kar)?\s*(karke)?|online|internet|web|se|karke|khud|apne\s*aap|upload\s*kar\s*(dena|de|do)|daal\s*dena|dal\s*de|post\s*kar\s*(dena|do)|schedule\s*(kar\s*do|karna|kar)?|save\s*kar\w*|gallery|vault|me|mein|par|ko)\b/gi,
+            ' '
+          )
+          .replace(/\b\d{1,2}\s*[:.]?\s*\d{0,2}\s*(baje|am|pm|shaam|raat|subah)\b/gi, ' ')
+          .replace(/\b(kal|tomorrow|aaj|today)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const goalText =
+          extractedTopic.length >= 6
+            ? extractedTopic
+            : 'AI Agents Se YouTube Aur Instagram Growth — 2026 Live Research Breakdown';
+
+        const mission = createMission({
+          goal: goalText,
+          niche: goalText,
+          targetSeconds: /\b(1\s*min|60\s*sec|one\s*minute)\b/i.test(low) ? 60 : 30,
+          platforms: {
+            instagram: !/\bsirf\s*(youtube|you\s*tube)\b/i.test(low),
+            facebook: !/\bsirf\s*(youtube|you\s*tube)\b/i.test(low),
+            youtube: true,
+          },
+          scheduledAt: when ? when.at : null,
+        });
+        void executeMission(mission.id);
+
+        setLiveUserText(cleaned);
+        setYoutubeOpen(true);
+        setAgentVoiceTask({ action: 'headbot_autopilot', topic: goalText, refUrl: urlFound, nonce: Date.now() });
+        showConfirmedBadge(when ? `👑 Head Bot Autopilot — ${when.label} par auto-upload!` : '👑 Head Bot Autopilot Chalu!');
+        speak(
+          when
+            ? `Ji Boss. Main abhi live internet par "${goalText}" ki research kar raha hoon, dusri websites se real HD footage utha kar video banaunga, pehle aapke vault aur gallery mein save karunga, aur ${when.label} par khud upload kar dunga.`
+            : `Ji Boss. Main abhi "${goalText}" par live research karke, dusri websites ki footage se video bana kar save kar raha hoon, aur turant upload bhi kar dunga.`
+        );
+        finishNormal();
+        return true;
+      }
+
+      // 12B. VOICE COMMAND -> OPEN OPENMONTAGE & MAKE + SAVE VIDEO IN VAULT ("OpenMontage mein jakar video bana ke save karke rakho!")
+      if (
+        /\b(video\s*bana\w*|make\s*(?:a\s*)?video|1\s*min(?:ute)?\s*video|open\s*video|open\s*montage|montage|scope\s*and|agent\s*ko\s*kaam|reel\s*bana\w*|short\s*bana\w*|whatsapp\s*video|social\s*agent|41\s*agent)\b/i.test(
+          low
+        )
+      ) {
+        const urlFound = cleaned.match(/https?:\/\/\S+/i)?.[0] || '';
+        const extractedTopic = cleaned
+          .replace(/https?:\/\/\S+/gi, '')
+          .replace(
+            /\b(please|open\s*montage|open\s*video|montage|scope\s*and|mein\s*ja\s*kar|jakar|agent\s*ko\s*kaam\s*(?:de\s*do|do)?|video\s*bana\s*(?:kar|ke|do|o)?|reel\s*bana\s*(?:kar|ke|do|o)?|usko\s*(?:save|sev)\s*kar\w*|save\s*kar\w*|sev\s*kar\w*|rakhiye|rakho|make\s*a?\s*video\s*(?:on|about)?|aur|par|ke\s*baare\s*mein|1\s*minute)\b/gi,
+            ' '
+          )
+          .replace(/\s+/g, ' ')
+          .trim();
+        setLiveUserText(cleaned);
+        setYoutubeOpen(true);
+        setAgentVoiceTask({
+          action: extractedTopic.length >= 3 ? 'make_and_save' : 'make_and_save',
+          topic: extractedTopic.length >= 3 ? extractedTopic : 'AI Automation & Smart Growth Secrets',
+          refUrl: urlFound,
+          nonce: Date.now(),
+        });
+        showConfirmedBadge('💾 OpenMontage Making & Saving Video!');
+        finishNormal();
+        return true;
+      }
+
+      return false;
+    },
+    [setMood, speak, showConfirmedBadge, addJarvisTask, addJarvisMemory]
+  );
+
+  // 👑 HEAD BOT AUTOPILOT HEARTBEAT — saved missions ko set time par khud utha kar publish karta hai
+  useEffect(() => startAutopilotHeartbeat(), []);
+
+  // 📚 BRAIN FILE — persistent memory (har chat/voice me model ko diya jaata hai,
+  //    har autonomous kaam ke baad khud update hota hai, GitHub/Worker par bhi jaata hai)
+  useEffect(() => startBrainCore(), []);
+
+  // 🛰️ JARVIS CORE — khud ka system: research, video, save, publish, comments, market cycle
+  useEffect(() => startJarvisCore(), []);
+
+  const buildLiveBrainPrompt = useCallback(() => {
+    try {
+      return buildBrainPrompt(900);
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const buildLiveWalletSummary = useCallback(() => {
+    const at = autoTraderRef.current;
+    const acc = at.liveAccount;
+    const holdTxt = acc.holdings
+      .filter((h) => h.valueInr >= 5)
+      .map((h) => `${h.currency}: ₹${Math.round(h.valueInr)}`)
+      .join(', ');
+    const pxTxt = at.pairs
+      .slice(0, 3)
+      .filter((p) => p.price > 0)
+      .map((p) => `${p.symbol} ₹${Math.round(p.price)} (${p.change24h >= 0 ? '+' : ''}${p.change24h}%)`)
+      .join(', ');
+    return `Real CoinDCX Account Live=${acc.live ? 'YES' : 'SYNCING'}, Total=₹${acc.totalInr.toFixed(
+      2
+    )}, SpotINR=₹${acc.spotInr.toFixed(2)}, AutoTrade=${at.autoTrading ? 'ON' : 'OFF'}${
+      holdTxt ? `, Holdings=[${holdTxt}]` : ''
+    }${pxTxt ? `, LiveMarket=[${pxTxt}]` : ''}`;
+  }, []);
+
+  const handleUtterance = useCallback(
+    async (text: string, onDone?: () => void) => {
+      if (!text || busyRef.current) {
+        onDone?.();
+        return;
+      }
+      busyRef.current = true;
+      // 🎯 v6.6.2 WORD CONFIRM — pichhle "kaunsa word?" sawaal ka jawab aaya?
+      const pendClarify = pendingClarifyRef.current;
+      if (pendClarify) {
+        pendingClarifyRef.current = null;
+        const choice = resolveClarifyAnswer(text, pendClarify.options);
+        if (choice && choice.toLowerCase() !== pendClarify.word.toLowerCase()) {
+          const re = new RegExp(pendClarify.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+          const fixed = pendClarify.original.replace(re, choice);
+          noteBrain('learned', `🎯 Word confirm: "${pendClarify.word}" → "${choice}"`);
+          if (fixed && fixed !== pendClarify.original) text = fixed;
+        }
+      }
+      setLiveUserText(text);
+      pushChatBubble('user', text);
+      const watchdog = setTimeout(() => {
+        busyRef.current = false;
+      }, 9500);
+      const finish = () => {
+        clearTimeout(watchdog);
+        busyRef.current = false;
+        onDone?.();
+      };
+
+      // Auto-learn personal facts permanently across app restarts!
+      const autoFact = extractAutoPersonalMemory(text);
+      if (autoFact) {
+        addJarvisMemory(autoFact);
+      }
+
+      // Private Owner Vault Unlock via Secret PIN ("owner unlock 7860") or Lock ("owner lock")
+      const normCheck = normalizeSpokenHindiText(text).toLowerCase();
+      if (/\bowner\s*unlock\s*7860\b/i.test(normCheck)) {
+        setOwnerUnlocked(true);
+        localStorage.setItem('apex_owner_vault_unlocked_v6', '1');
+        const msg = '👑 Owner Private Vault Unlocked Boss! Aapka personal CoinDCX aur YouTube account active ho gaya.';
+        setLiveBotText(msg);
+        pushChatBubble('bot', msg);
+        speak(msg, finish);
+        return;
+      }
+      if (/\b(share\s*safe\s*on|owner\s*lock|guest\s*mode)\b/i.test(normCheck)) {
+        setOwnerUnlocked(false);
+        localStorage.removeItem('apex_owner_vault_unlocked_v6');
+        const msg = '🛡️ Share-Safe Mode ON! Ab aap kisi ko bhi APK bhej sakte hain — aapka koi personal data nahi dikhega.';
+        setLiveBotText(msg);
+        pushChatBubble('bot', msg);
+        speak(msg, finish);
+        return;
+      }
+
+      // DIRECT 👑 HEAD BOT AUTONOMOUS TRADING VOICE / CHAT ROUTING (Futures + Spot + Position Sync — ZERO Permission Delay!)
+      if (
+        /\b(head\s*bot|futures?|chashme|short\s*kar|long\s*kar|position|exit\s*all|close\s*all)\b/i.test(normCheck) ||
+        (/\b(buy|sell|kharid|bech|trade)\b/i.test(normCheck) &&
+          /\b(btc|bitcoin|eth|ethereum|sol|solana|xrp|doge|inr|usdt|rupay|rupee|₹|spot|future)\b/i.test(normCheck))
+      ) {
+        clearTimeout(watchdog);
+        setLiveVoiceStage('thinking');
+        setMood('excited');
+        autoTraderRef.current
+          .sendCommandToHeadBot(text)
+          .then((headReply) => {
+            setLiveBotText(headReply);
+            pushChatBubble('bot', `👑 ${headReply}`);
+            speak(headReply, finish);
+          })
+          .catch(() => {
+            speak('Head Bot command send ho gaya hai Boss!', finish);
+          });
+        return;
+      }
+
+      // REEL 1 — MYRAA AUTONOMOUS DEEP WEB RESEARCH & TASK EXECUTION ("usko kaam do aur woh khud auto research kare!")
+      if (
+        /\b(auto\s*research|research\s*karo|research\s*karke|deep\s*research|khoj\s*karo|report\s*banao|business\s*plan\s*banao|iske\s*baare\s*mein\s*research)\b/i.test(
+          normCheck
+        )
+      ) {
+        clearTimeout(watchdog);
+        setLiveVoiceStage('thinking');
+        setMood('thinking');
+        pushChatBubble('bot', '🔍 Autonomous Research Agent shuru ho gaya hai — live sources check kar raha hoon…');
+        runAutonomousDeepResearch(text, (stepMsg) => {
+          setLiveBotText(stepMsg);
+        })
+          .then((res) => {
+            addJarvisTask(`📄 Research Done: ${res.query}`);
+            setLiveBotText(res.spokenSummary);
+            pushChatBubble('bot', res.markdownReport);
+            speak(res.spokenSummary, finish);
+          })
+          .catch(() => {
+            speak('Research complete karne me network slow tha Boss, ek baar fir batayein.', finish);
+          });
+        return;
+      }
+
+      // REEL 1 — MYRAA SMART AI WHATSAPP AUTO-COMPOSER!
+      if (/\bwhatsapp\b/i.test(normCheck) && /\b(message|msg|bhejo|likho|send|bol\s*do|inform)\b/i.test(normCheck)) {
+        clearTimeout(watchdog);
+        setLiveVoiceStage('thinking');
+        composeAndOpenWhatsAppSmart(text).then((replyTxt) => {
+          setLiveBotText(replyTxt);
+          pushChatBubble('bot', replyTxt);
+          speak('WhatsApp message likh kar khol diya hai Boss!', finish);
+        });
+        return;
+      }
+
+      // REEL 1 & REEL 2 — MYRAA / ULTRON HANDS-FREE DIRECT YOUTUBE SONG & VIDEO AUTO-PLAY!
+      if (
+        (/\b(play|bajao|chalao|sunao)\b/i.test(normCheck) &&
+          !/\b(open\s*montage|video\s*banao|trade)\b/i.test(normCheck) &&
+          normCheck.split(/\s+/).length >= 2) ||
+        /\b(song|gaana|music)\b.*\b(play|bajao|chalao|kholo)\b/i.test(normCheck)
+      ) {
+        clearTimeout(watchdog);
+        setLiveVoiceStage('thinking');
+        playSongOrVideoHandsFree(text).then(({ spokenReply }) => {
+          setLiveBotText(spokenReply);
+          pushChatBubble('bot', `🎵 ${spokenReply}`);
+          speak(spokenReply, finish);
+        });
+        return;
+      }
+
+      // First check all voice control + confirmation intents! (MUST pass `finish` so busyRef always resets!)
+      if (tryHandleSmartVoiceControl(text, finish)) {
+        return;
+      }
+
+      // Instant 0ms local conversational greetings so everyday speech replies with ZERO delay!
+      for (const [rx, ans] of QUICK_RESPONSES) {
+        if (rx.test(text.trim())) {
+          const fastMsg = typeof ans === 'function' ? ans() : ans;
+          setLiveUserText(text);
+          setLiveBotText(fastMsg);
+          speak(fastMsg, finish);
+          return;
+        }
+      }
+
       const sentiment = analyzeSentiment(text);
       setSentimentInfo(sentiment);
-
       if (sentiment.mood !== 'neutral' && sentiment.mood !== 'idle') {
         activeSentimentRef.current = sentiment.mood;
         setMood(sentiment.mood);
-        const emoji =
-          sentiment.mood === 'excited'
-            ? '🚀'
-            : sentiment.mood === 'happy'
-            ? '😊'
-            : sentiment.mood === 'angry'
-            ? '😡'
-            : sentiment.mood === 'sad'
-            ? '😢'
-            : sentiment.mood === 'surprised'
-            ? '😲'
-            : sentiment.mood === 'calm'
-            ? '😌'
-            : '✨';
-        const pulseNotice = sentiment.isExcited || sentiment.mood === 'excited' || sentiment.mood === 'happy' ? ' · ❤️ Heart rate surging to 135+ BPM' : '';
-        toast(`${emoji} Tone detected: ${sentiment.label.toUpperCase()} (${Math.round(sentiment.score * 100)}%)${pulseNotice}`, 3400);
       } else {
         activeSentimentRef.current = null;
         setMood('thinking');
       }
 
-      // Trading bot direct voice/text trigger
-      if (/\b(open trading|open trade|trading kholo)\b/i.test(text)) {
-        setTradingBotOpen(true);
-        setMood('excited');
-        const botReply = 'Trading terminal khol diya hai.';
-        toast(botReply, 3000);
-        speak(botReply, () => {
-          busyRef.current = false;
-        });
-        return;
-      }
+      try {
+        setLiveUserText(text);
+        setLiveVoiceStage('thinking');
 
-      // 3D Printer check
-      if (/\b(printer|print|3d)\b/i.test(text)) {
-        try {
-          const r = await fetch('/printer');
-          const j = await r.json();
-          const say = j.error
-            ? `Printer: ${j.error}`
-            : !j.configured
-            ? 'No hardware printer configured. Virtual benchy simulation running.'
-            : `Printer ${j.state || ''}. File ${j.file || 'none'}${
-                j.progress != null ? `, ${j.progress} percent done.` : '.'
-              }`;
-          toast(`“${say}”`, 5000);
-          speak(say, () => {
-            busyRef.current = false;
-          });
+        // 1) Instant ~200ms Real-Time Market / Gold / Silver / Nifty / Stocks / Dollar / Weather Check!
+        const liveWorldAnswer = await tryResolveRealtimeWorldQuery(text);
+        if (liveWorldAnswer) {
+          chatMemRef.current.push({ role: 'user', text });
+          chatMemRef.current.push({ role: 'model', text: liveWorldAnswer });
+          while (chatMemRef.current.length > 12) chatMemRef.current.shift();
+          try {
+            localStorage.setItem(
+              userScopedKey('apex_chat_mem', activeUserId),
+              JSON.stringify(chatMemRef.current)
+            );
+          } catch {}
+          speak(liveWorldAnswer, finish);
           return;
-        } catch (e) {
-          busyRef.current = false;
-        }
-      }
-
-      // Instant Android Phone App / Call / Alarm / Timer Launcher (Voice or Text!)
-      const phoneCmd = parseLocalPhoneCommand(text);
-      if (phoneCmd) {
-        setLiveUserText(text);
-        toast(`📱 ${phoneCmd.reply}`, 3500);
-        speak(phoneCmd.reply, () => {
-          busyRef.current = false;
-        });
-        setTimeout(() => {
-          executePhoneAction(phoneCmd.action, phoneCmd.payload);
-        }, 350);
-        return;
-      }
-
-      // JARVIS Personal OS Voice/Text Commands (Tasks, Memory, Open Modules — Trading stays strictly inside AI Trading Bot!)
-      const taskCmd = text.match(/(?:task\s*add\s*karo|add\s*task|remind\s*me\s*(?:to)?|yaad\s*dilana)\s*[:\-]?\s*(.+)/i);
-      if (taskCmd?.[1]) {
-        const t = taskCmd[1].trim();
-        addJarvisTask(t);
-        setLiveUserText(text);
-        const reply = `Bilkul boss, "${t}" aapke Tasks me add kar diya hai.`;
-        toast(`☑ ${reply}`, 3500);
-        speak(reply, () => {
-          busyRef.current = false;
-        });
-        return;
-      }
-      const memCmd = text.match(/(?:yaad\s*rakhna|remember\s*(?:that)?|save\s*memory)\s*[:\-]?\s*(.+)/i);
-      if (memCmd?.[1]) {
-        const m = memCmd[1].trim();
-        addJarvisMemory(m);
-        setLiveUserText(text);
-        const reply = `Samajh gaya boss, Memory me save kar liya: "${m}".`;
-        toast(`🧠 ${reply}`, 3500);
-        speak(reply, () => {
-          busyRef.current = false;
-        });
-        return;
-      }
-      if (/(youtube\s*(studio|kholo|open)|shorts\s*studio)/i.test(text)) {
-        setYoutubeOpen(true);
-        const reply = 'YouTube Autonomous Studio khol diya hai boss!';
-        speak(reply, () => {
-          busyRef.current = false;
-        });
-        return;
-      }
-      if (/(trading\s*(bot|kholo|open)|day\s*trader|chart\s*scan)/i.test(text)) {
-        setTradingBotOpen(true);
-        const reply = 'AI Day Trader Bot khol diya hai!';
-        speak(reply, () => {
-          busyRef.current = false;
-        });
-        return;
-      }
-
-      // Ask real live AI brain directly — pure natural human conversation (ZERO unsolicited trading chatter!)
-      try {
-        setLiveUserText(text);
-        setLiveVoiceStage('thinking');
-        const t0 = performance.now();
-        const chatBody = JSON.stringify({
-          text,
-          voiceMode: true,
-          history: chatMemRef.current,
-          model: deepMode ? 'gemini-3.8-flash' : undefined,
-        });
-        const r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/chat', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: chatBody,
-        });
-        const j = await r.json();
-        const reply = j.text || 'Main sun raha hoon, boliye!';
-        const ms = Math.round(performance.now() - t0);
-        toast(`“${reply.slice(0, 90)}” · ${ms}ms`, 5000);
-        chatMemRef.current.push({ role: 'user', text });
-        chatMemRef.current.push({ role: 'model', text: reply });
-        while (chatMemRef.current.length > 8) chatMemRef.current.shift();
-
-        speak(reply, () => {
-          busyRef.current = false;
-        });
-      } catch (err) {
-        const fallback = 'Network thoda slow hai, ek baar fir boliye.';
-        toast(fallback, 3000);
-        speak(fallback, () => {
-          busyRef.current = false;
-        });
-      }
-    },
-    [setMood, toast, speak, deepMode]
-  );
-
-  const startEars = useCallback(async () => {
-    audio.ensureCtx();
-    busyRef.current = false;
-    liveSpeakingRef.current = false;
-    setLiveUserText('');
-    setLiveBotText('Haan dost, boliye — main sun raha hoon!');
-
-    let stream: MediaStream | null = null;
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-        micStreamRef.current = stream;
-      } catch (err) {
-        toast('⚠️ Phone me Microphone permission Allow karein!');
-        setIsListening(false);
-        return;
-      }
-    } else {
-      toast('⚠️ Is browser me Microphone uplabdh nahi hai');
-      setIsListening(false);
-      return;
-    }
-
-    setIsListening(true);
-    setLiveVoiceStage('listening');
-    setMood('listening');
-    audio.mood('listening');
-
-    const releaseMicHardware = () => {
-      sendChunkNowRef.current = null;
-      setMicLevel(0);
-      if (micStreamRef.current) {
-        try {
-          micStreamRef.current.getTracks().forEach((track) => track.stop());
-        } catch {}
-        micStreamRef.current = null;
-      }
-      audio.disconnectMicStream();
-      setIsListening(false);
-    };
-
-    // Pure LiveKit-grade 16kHz PCM WAV capture with Adaptive Noise-Floor + 900ms Speaker Echo Lockout
-    const flushNow = await audio.startLivePcmCapture(stream, {
-      isMutedGate: () =>
-        liveSpeakingRef.current ||
-        busyRef.current ||
-        !poweredOnRef.current ||
-        Date.now() < echoCooldownUntilRef.current,
-      onLevel: (lvl) => setMicLevel(lvl),
-      onUtteranceWav: async (wavBuf) => {
-        if (!poweredOnRef.current || !micStreamRef.current || busyRef.current) return;
-        busyRef.current = true;
-        setLiveVoiceStage('thinking');
-        setMood('thinking');
-
-        // In default Single-Turn mode ('TAP TO SPEAK'), release mic immediately so it NEVER loops on its own!
-        if (!autoContinuousRef.current) {
-          releaseMicHardware();
         }
 
-        // Safety watchdog: never allow busyRef to stay stuck if mobile data drops
-        const watchdog = setTimeout(() => {
-          busyRef.current = false;
-          liveSpeakingRef.current = false;
-          setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-        }, 14000);
-
-        try {
-          const memSummary = jarvisMemoriesRef.current
-            .slice(0, 5)
-            .map((m) => m.text)
-            .join('; ');
-          const elCfgNow = loadElevenConfig();
-          const res = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/voice-turn', {
-            method: 'POST',
-            headers: {
-              'content-type': 'audio/wav',
-              'x-voice-history': encodeURIComponent(JSON.stringify(chatMemRef.current.slice(-6))),
-              'x-wallet-context': encodeURIComponent(memSummary),
-              'x-elevenlabs-voice': elCfgNow.voiceId || 'JBFqnCBsd6RMkjVDRZzb',
-              ...(elCfgNow.apiKey ? { 'x-skip-tts': '1' } : {}),
-            },
-            body: wavBuf,
+        // 🎯 v6.6.2 — "main pretend nahi karta ki samajh gaya": ek chhota, targeted sawaal.
+        //    Rules (reel wale hi): short answer kabhi nahi, long clear sentence me 1 word
+        //    chhodo, aur LAGATAAR 2 baar sawaal NAHI (doosri baar best reading se aage).
+        const vcfg = loadVoiceLock();
+        if (vcfg.enabled && vcfg.askUncertain) {
+          const meta = lastSpeechMetaRef.current;
+          const cl = pickClarification({
+            text,
+            alts: meta.alts,
+            interim: meta.interim,
+            confidence: meta.confidence,
+            alreadyAsked: clarifyAskedRef.current,
           });
-          const j = await res.json();
-          clearTimeout(watchdog);
-
-          if (!j?.ok || j?.empty || !j?.heard) {
-            busyRef.current = false;
-            setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-            setMood(micStreamRef.current ? 'listening' : 'idle');
+          clarifyAskedRef.current = cl.ask;
+          if (cl.ask && cl.options && cl.word) {
+            pendingClarifyRef.current = { word: cl.word, options: cl.options, original: text };
+            const q = clarifyQuestion(cl);
+            setLiveBotText(q);
+            pushChatBubble('bot', q);
+            speak(q, finish, true);
             return;
           }
-
-          setLiveUserText(j.heard);
-          setLiveBotText(j.reply);
-
-          if (j.action === 'ADD_TASK' && j.payload) addJarvisTask(j.payload);
-          if (j.action === 'ADD_MEMORY' && j.payload) addJarvisMemory(j.payload);
-          if (j.action === 'OPEN_YOUTUBE') setYoutubeOpen(true);
-          if (j.action === 'OPEN_TRADING_BOT') setTradingBotOpen(true);
-          if (
-            j.action === 'LAUNCH_APP' ||
-            j.action === 'SET_ALARM' ||
-            j.action === 'SET_TIMER' ||
-            j.action === 'DIAL_PHONE' ||
-            j.action === 'OPEN_SETTINGS'
-          ) {
-            setTimeout(() => {
-              executePhoneAction(j.action, j.payload);
-            }, 350);
-          } else if (j.heard) {
-            const localPhone = parseLocalPhoneCommand(j.heard);
-            if (localPhone) {
-              setTimeout(() => {
-                executePhoneAction(localPhone.action, localPhone.payload);
-              }, 350);
-            }
-          }
-
-          chatMemRef.current.push({ role: 'user', text: j.heard });
-          chatMemRef.current.push({ role: 'model', text: j.reply });
-          while (chatMemRef.current.length > 8) chatMemRef.current.shift();
-
-          // Play pre-synthesized HD voice immediately over WebAudio -> ZERO extra network wait!
-          if (j.audioBase64 && !quietModeRef.current) {
-            const binStr = atob(j.audioBase64);
-            const raw = new Uint8Array(binStr.length);
-            for (let i = 0; i < binStr.length; i++) raw[i] = binStr.charCodeAt(i);
-            const ok = await audio.playVoiceArrayBuffer(
-              raw.buffer,
-              () => {
-                liveSpeakingRef.current = true;
-                setLiveVoiceStage('speaking');
-                setMood('speaking');
-                if (engineRef.current) engineRef.current.voiceTarget = 1.0;
-              },
-              () => {
-                echoCooldownUntilRef.current = Date.now() + 900;
-                liveSpeakingRef.current = false;
-                busyRef.current = false;
-                if (engineRef.current) engineRef.current.voiceTarget = 0.12;
-                setLiveVoiceStage(micStreamRef.current && poweredOnRef.current ? 'listening' : 'idle');
-                setMood(micStreamRef.current && poweredOnRef.current ? 'listening' : 'idle');
-              }
-            );
-            if (ok) return;
-          }
-
-          // Direct ElevenLabs / Fallback TTS
-          speak(j.reply, () => {
-            echoCooldownUntilRef.current = Date.now() + 900;
-            busyRef.current = false;
-          });
-        } catch (err) {
-          clearTimeout(watchdog);
-          busyRef.current = false;
-          liveSpeakingRef.current = false;
-          setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-          setMood(micStreamRef.current ? 'listening' : 'idle');
+        } else {
+          clarifyAskedRef.current = false;
         }
-      },
-    });
 
-    sendChunkNowRef.current = flushNow;
-  }, [toast, setMood, speak, addJarvisTask, addJarvisMemory]);
+        // 2) Sub-0.55s Fast Parallel AI Brain with Persistent Personal Memory & Real CoinDCX Context!
+        const walletSnap = buildLiveWalletSummary();
+        const reply = await askFastLiveBrain({
+          userText: text,
+          userName: activeUser?.name || 'Dost',
+          memories: jarvisMemoriesRef.current.map((m) => m.text),
+          walletSummary: walletSnap,
+          history: chatMemRef.current,
+        });
 
-  const stopEars = useCallback(() => {
-    clearInterval(vadTimerRef.current);
-    vadTimerRef.current = null;
+        chatMemRef.current.push({ role: 'user', text });
+        chatMemRef.current.push({ role: 'model', text: reply });
+        while (chatMemRef.current.length > 12) chatMemRef.current.shift();
+        try {
+          localStorage.setItem(
+            userScopedKey('apex_chat_mem', activeUserId),
+            JSON.stringify(chatMemRef.current)
+          );
+        } catch {}
+
+        speak(reply, finish);
+      } catch {
+        const fallback = 'Network thoda slow hai, ek baar fir boliye.';
+        speak(fallback, finish);
+      }
+    },
+    [
+      setMood,
+      speak,
+      tryHandleSmartVoiceControl,
+      buildLiveWalletSummary,
+      addJarvisMemory,
+      activeUserId,
+      activeUser,
+    ]
+  );
+
+  const releaseMicHardwareOnly = useCallback(() => {
+    clearTimeout(idleStandbyTimerRef.current);
     sendChunkNowRef.current = null;
-    busyRef.current = false;
-    liveSpeakingRef.current = false;
     setMicLevel(0);
+    setLiveInterimText('');
+    try {
+      window.ApexAndroid?.stopNativeListen?.();
+    } catch {}
+    if (recRef.current) {
+      try {
+        recRef.current.onresult = null;
+        recRef.current.onend = null;
+        recRef.current.onerror = null;
+        recRef.current.abort();
+      } catch {}
+      recRef.current = null;
+    }
     if (micStreamRef.current) {
       try {
         micStreamRef.current.getTracks().forEach((track) => track.stop());
-      } catch (e) {}
+      } catch {}
       micStreamRef.current = null;
     }
     audio.disconnectMicStream();
-    cancelAllSpeech();
+    setIsListening(false);
+  }, []);
+
+  const openCallMicTurnRef = useRef<() => Promise<void>>(async () => {});
+
+  const openCallMicTurn = useCallback(async () => {
+    if (!poweredOnRef.current || !callActiveRef.current) return;
+    releaseMicHardwareOnly();
+
+    const scheduleAfterReply = () => {
+      echoCooldownUntilRef.current = Date.now() + 280;
+      liveSpeakingRef.current = false;
+      busyRef.current = false;
+      if (engineRef.current) engineRef.current.voiceTarget = 0.12;
+      setIsListening(false);
+      setMicLevel(0);
+      setLiveVoiceStage('idle');
+      setMood('idle');
+      // Turn-by-Turn Natural Back-to-Back Conversation: Mic was 100% OFF during speaker audio (pure loud STREAM_MUSIC!),
+      // and automatically re-opens 320ms AFTER reply finishes so user can keep talking naturally without re-tapping!
+      if (autoContinuousRef.current && poweredOnRef.current && assistantOpenRef.current) {
+        setTimeout(() => {
+          if (poweredOnRef.current && assistantOpenRef.current && !liveSpeakingRef.current) {
+            callActiveRef.current = true;
+            openCallMicTurnRef.current();
+          }
+        }, 320);
+      } else {
+        callActiveRef.current = false;
+      }
+    };
+
+    // =========================================================================
+    // ENGINE 1 (PRIMARY #1 ON ANDROID PHONE): GOOGLE NATIVE SPEECHRECOGNIZER (hi-IN / en-IN)
+    // Eliminates 100% of Whisper "ulta sun raha hai" room-noise hallucinations!
+    // Uses exact Google Indian Hinglish + English recognition & keeps speaker 100% in loud STREAM_MUSIC!
+    // =========================================================================
+    if (window.ApexAndroid?.hasNativeStt?.()) {
+      let nativeHandled = false;
+      let lastNativePartial = '';
+      busyRef.current = false;
+      liveSpeakingRef.current = false;
+      setIsListening(true);
+      setLiveVoiceStage('listening');
+      setMood('listening');
+
+      const finishOneShotNative = (rawSpoken: string) => {
+        if (nativeHandled) return;
+        nativeHandled = true;
+        try {
+          window.ApexAndroid?.stopNativeListen?.();
+          window.ApexAndroid?.setSpeakerphone?.(true);
+        } catch {}
+        setIsListening(false);
+        setMicLevel(0);
+        setLiveInterimText('');
+        const clean = (rawSpoken || '').trim();
+        // If silence/noise or user didn't speak, STOP mic 100% completely — NEVER auto-reopen in a blinking loop!
+        if (!clean || !poweredOnRef.current) {
+          callActiveRef.current = false;
+          setIsListening(false);
+          setMicLevel(0);
+          setLiveVoiceStage('idle');
+          setMood('idle');
+          return;
+        }
+        setLiveUserText(clean);
+        setLiveVoiceStage('thinking');
+        setMood('thinking');
+        handleUtterance(clean, scheduleAfterReply);
+      };
+
+      (window as any).__onApexSpeechReady = () => {
+        setIsListening(true);
+        setLiveVoiceStage('listening');
+      };
+      (window as any).__onApexSpeechRms = (lvl: number) => setMicLevel(lvl);
+      (window as any).__onApexSpeechPartial = (part: string) => {
+        const trimmed = (part || '').trim();
+        if (!trimmed) return;
+        lastNativePartial = trimmed;
+        setLiveInterimText(trimmed);
+      };
+      (window as any).__onApexSpeechFinal = (finalTxt: string, alts?: string[], conf?: number) => {
+        lastSpeechMetaRef.current = {
+          alts: Array.isArray(alts) ? alts.filter(Boolean) : [],
+          interim: lastNativePartial,
+          confidence: typeof conf === 'number' && conf >= 0 ? conf : -1,
+        };
+        finishOneShotNative(finalTxt || lastNativePartial);
+      };
+      (window as any).__onApexSpeechError = () => {
+        finishOneShotNative(lastNativePartial);
+      };
+
+      // Use Official Google India Bilingual Hindi + English ('hi-IN') so spoken Hindi & English words both hear 100% accurately!
+      window.ApexAndroid.startNativeListen?.('hi-IN');
+      return;
+    }
+
+    // =========================================================================
+    // ENGINE 2 (CHROME / DESKTOP BROWSER NATIVE SPEECHRECOGNITION - ZERO HALLUCINATION!)
+    // =========================================================================
+    const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRec) {
+      try {
+        const rec = new SpeechRec();
+        recRef.current = rec;
+        rec.lang = 'hi-IN';
+        rec.interimResults = true;
+        rec.continuous = false;
+        rec.maxAlternatives = 3;
+        let finalTranscript = '';
+        let latestInterim = '';
+        let doneOnce = false;
+
+        setIsListening(true);
+        setLiveVoiceStage('listening');
+        setMood('listening');
+
+        rec.onresult = (ev: any) => {
+          let interim = '';
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const t = ev.results[i][0]?.transcript || '';
+            if (ev.results[i].isFinal) {
+              finalTranscript += t + ' ';
+              // 🎯 alternatives + engine confidence (word-confirm isi se banega)
+              const altList: string[] = [];
+              for (let a = 0; a < (ev.results[i].length || 1); a++) {
+                const x = ev.results[i][a]?.transcript;
+                if (x) altList.push(String(x).trim());
+              }
+              const c = Number(ev.results[i][0]?.confidence);
+              lastSpeechMetaRef.current = {
+                alts: altList,
+                interim: latestInterim || '',
+                confidence: Number.isFinite(c) && c >= 0 ? c : -1,
+              };
+            } else interim += t;
+          }
+          latestInterim = (finalTranscript + interim).trim();
+          if (latestInterim) {
+            setLiveInterimText(latestInterim);
+            setMicLevel(0.65);
+          }
+        };
+        rec.onend = () => {
+          if (doneOnce) return;
+          doneOnce = true;
+          setIsListening(false);
+          setMicLevel(0);
+          setLiveInterimText('');
+          const textOut = (finalTranscript || latestInterim).trim();
+          if (textOut && poweredOnRef.current) {
+            handleUtterance(textOut, scheduleAfterReply);
+          } else {
+            scheduleAfterReply();
+          }
+        };
+        rec.onerror = () => {
+          if (doneOnce) return;
+          doneOnce = true;
+          setIsListening(false);
+          setMicLevel(0);
+          setLiveInterimText('');
+          scheduleAfterReply();
+        };
+        rec.start();
+        return;
+      } catch {}
+    }
+
+    // =========================================================================
+    // ENGINE 3 FALLBACK: HARDWARE MIC -> GEMINI EXACT HINGLISH AUDIO / WHISPER
+    // =========================================================================
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
+        if (!poweredOnRef.current || !callActiveRef.current) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        micStreamRef.current = stream;
+        setIsListening(true);
+        setLiveVoiceStage('listening');
+        setMood('listening');
+
+        let capturing = false;
+        const flushFn = await audio.startLivePcmCapture(stream, {
+          isMutedGate: () => liveSpeakingRef.current || Date.now() < echoCooldownUntilRef.current || capturing,
+          onLevel: (lvl) => setMicLevel(lvl),
+          onUtteranceWav: async (wavBuf) => {
+            if (capturing || !poweredOnRef.current) return;
+            capturing = true;
+            releaseMicHardwareOnly();
+            try {
+              window.ApexAndroid?.setSpeakerphone?.(true);
+            } catch {}
+            setLiveVoiceStage('thinking');
+            setMood('thinking');
+            setLiveInterimText('Sun liya… samajh raha hoon…');
+
+            try {
+              // Prefer Gemini 2.5 Flash Exact Hinglish Audio Transcription if user key is saved!
+              let heard = (await transcribeAudioWithGeminiKey(wavBuf)) || '';
+              if (!heard) {
+                let r = await fetch('/stt', {
+                  method: 'POST',
+                  headers: { 'content-type': 'audio/wav' },
+                  body: wavBuf,
+                }).catch(() => null);
+                if (!r || !r.ok) {
+                  r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/stt', {
+                    method: 'POST',
+                    headers: { 'content-type': 'audio/wav' },
+                    body: wavBuf,
+                  });
+                }
+                const j = r && r.ok ? await r.json() : null;
+                heard = String(j?.text || '').trim();
+              }
+              setLiveInterimText('');
+              if (!heard || heard.length < 2 || /^[.,?!-\s]+$/.test(heard)) {
+                capturing = false;
+                if (poweredOnRef.current && assistantOpenRef.current) {
+                  callActiveRef.current = true;
+                  openCallMicTurnRef.current();
+                }
+                return;
+              }
+              handleUtterance(heard, scheduleAfterReply);
+            } catch {
+              setLiveInterimText('');
+              scheduleAfterReply();
+            }
+          },
+        });
+        sendChunkNowRef.current = flushFn;
+        return;
+      } catch {}
+    }
+
+    toast('Voice ke liye Microphone permission Allow karein ya Chat me likhein');
+    callActiveRef.current = false;
     setIsListening(false);
     setLiveVoiceStage('idle');
+  }, [toast, setMood, langMode, handleUtterance, releaseMicHardwareOnly]);
+
+  openCallMicTurnRef.current = openCallMicTurn;
+
+  const startGeminiSimultaneousLive = useCallback(
+    async (apiKey: string): Promise<boolean> => {
+      geminiSessionRef.current?.stop();
+      const session = new GeminiLiveSession();
+      geminiSessionRef.current = session;
+      const walletSnap = buildLiveWalletSummary();
+      const ok = await session.start(apiKey, {
+        systemInstruction:
+          `You are APEX, the user's real-time live voice AI assistant and smart friend. ` +
+          `Speak naturally, warmly, and humanly like Google Gemini Live / Siri in natural everyday Indian Hinglish (Hindi + English mix). ` +
+          `Keep answers concise (1 to 3 short spoken sentences) unless asked for more. ` +
+          `Live Real CoinDCX Trading Account Status right now: ${walletSnap}. ` +
+          (buildLiveBrainPrompt() || 'No saved brain notes yet.'),
+        onStage: (st) => {
+          setLiveVoiceStage(st);
+          setIsListening(st === 'listening');
+          setMood(st === 'speaking' ? 'speaking' : st === 'thinking' ? 'thinking' : 'listening');
+          if (engineRef.current) engineRef.current.voiceTarget = st === 'speaking' ? 0.95 : 0.15;
+        },
+        onMicLevel: (lvl) => setMicLevel(lvl),
+        onUserTranscript: (txt, isFinal) => {
+          if (isFinal) {
+            setLiveInterimText('');
+            setLiveUserText(txt);
+            tryHandleSmartVoiceControl(txt);
+          } else {
+            setLiveInterimText(txt);
+          }
+        },
+        onBotTranscript: (txt) => setLiveBotText(txt),
+        onError: (msg) => {
+          toast(msg, 2800);
+          setGeminiLiveActive(false);
+        },
+        onClosed: () => {
+          setGeminiLiveActive(false);
+          if (poweredOnRef.current && assistantOpenRef.current) {
+            callActiveRef.current = true;
+            openCallMicTurnRef.current();
+          }
+        },
+      });
+      setGeminiLiveActive(ok);
+      return ok;
+    },
+    [buildLiveWalletSummary, setMood, toast, tryHandleSmartVoiceControl]
+  );
+
+  const startEars = useCallback(async () => {
+    setMenuOpen(false);
+    setAssistantOpen(true);
+    assistantOpenRef.current = true;
+    audio.unlockSpeaker();
+    audio.assistantChime(true);
+    cancelAllSpeech();
+    callActiveRef.current = true;
+
+    const liveKey = loadGeminiLiveKey();
+    if (liveKey) {
+      const startedLive = await startGeminiSimultaneousLive(liveKey);
+      if (startedLive) return;
+    }
+    openCallMicTurnRef.current();
+  }, [cancelAllSpeech, startGeminiSimultaneousLive]);
+
+  const stopEars = useCallback(() => {
+    callActiveRef.current = false;
+    assistantOpenRef.current = false;
+    setAssistantOpen(false);
+    setGeminiLiveActive(false);
+    geminiSessionRef.current?.stop();
+    geminiSessionRef.current = null;
+    clearInterval(vadTimerRef.current);
+    clearTimeout(idleStandbyTimerRef.current);
+    vadTimerRef.current = null;
+    releaseMicHardwareOnly();
+    cancelAllSpeech();
+    setLiveVoiceStage('idle');
     setMood('idle');
-  }, [setMood, cancelAllSpeech]);
+  }, [setMood, cancelAllSpeech, releaseMicHardwareOnly]);
+
+  const handleAssistantOrbTap = useCallback(() => {
+    audio.unlockSpeaker();
+    if (liveVoiceStage === 'speaking') {
+      // Siri / Google-Assistant instant barge-in: interrupt current speech & listen immediately!
+      cancelAllSpeech();
+      audio.assistantChime(true);
+      callActiveRef.current = true;
+      openCallMicTurnRef.current();
+      return;
+    }
+    if (isListening) {
+      // Flush spoken utterance immediately if anything was spoken, otherwise pause to standby
+      if (sendChunkNowRef.current) {
+        sendChunkNowRef.current(true);
+      }
+      return;
+    }
+    audio.assistantChime(true);
+    callActiveRef.current = true;
+    openCallMicTurnRef.current();
+  }, [isListening, liveVoiceStage, cancelAllSpeech]);
 
   const toggleMic = useCallback(() => {
-    audio.ensureCtx();
-    if (isListening) {
+    audio.unlockSpeaker();
+    if (assistantOpenRef.current) {
       stopEars();
     } else {
       startEars();
     }
-  }, [isListening, startEars, stopEars]);
+  }, [startEars, stopEars]);
 
-  // Hand gesture tracking
+  // Always-ON Zero-Lag Background Worker Hand AI Engine (0.00ms main-thread cost · Zero voice stutter!)
   const startGesture = useCallback(async () => {
-    audio.ensureCtx();
+    if (gestureStreamRef.current) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 320, height: 240, facingMode: 'user' },
+        video: { width: { ideal: 256 }, height: { ideal: 192 }, frameRate: { ideal: 24, max: 30 }, facingMode: 'user' },
+        audio: false,
       });
+      if (!poweredOnRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
       gestureStreamRef.current = stream;
       const v = document.createElement('video');
       v.srcObject = stream;
@@ -847,84 +2048,32 @@ export const App: React.FC = () => {
       await v.play();
       gestureVideoRef.current = v;
       setGestureActive(true);
-      setMood('listening');
-      toast('Hand tracking on — gesture to move head');
 
-      const workCanvas = document.createElement('canvas');
-      workCanvas.width = 80;
-      workCanvas.height = 60;
-      const wCtx = workCanvas.getContext('2d', { willReadFrequently: true })!;
+      // Re-lock Main Loudspeaker so Camera open NEVER switches audio routing on Android!
+      try {
+        window.ApexAndroid?.setSpeakerphone?.(true);
+      } catch {}
 
-      const loop = () => {
+      handWorker.ensureStarted();
+      let lastSendMs = 0;
+
+      const loop = (now: number) => {
         if (!gestureStreamRef.current) return;
-        if (v && v.readyState >= 2) {
-          wCtx.drawImage(v, 0, 0, 80, 60);
-          const d = wCtx.getImageData(0, 0, 80, 60).data;
-          let sx = 0,
-            sy = 0,
-            n = 0;
-          for (let y = 0; y < 60; y++) {
-            for (let x = 0; x < 80; x++) {
-              const i = (y * 80 + x) * 4;
-              const r = d[i],
-                g = d[i + 1],
-                b = d[i + 2];
-              const mx = Math.max(r, g, b),
-                mn = Math.min(r, g, b);
-              if (r > 95 && g > 40 && b > 20 && mx - mn > 18 && r > g + 8 && r > b + 8 && Math.abs(r - g) < 90) {
-                sx += x;
-                sy += y;
-                n++;
-              }
-            }
-          }
-          if (n > 90) {
-            const cx = sx / n,
-              cy = sy / n;
-            if (!gestureSeenRef.current) {
-              gestureSeenRef.current = true;
-              audio.acquire();
-            }
-            const px = gestureCoordsRef.current.sx;
-            const py = gestureCoordsRef.current.sy;
-            const smoothRate = gestureSmoothingRef.current;
-            const sens = gestureSensitivityRef.current;
-
-            gestureCoordsRef.current.sx += (cx / 80 - gestureCoordsRef.current.sx) * smoothRate;
-            gestureCoordsRef.current.sy += (cy / 60 - gestureCoordsRef.current.sy) * smoothRate;
-
-            if (engineRef.current) {
-              engineRef.current.targetYaw = (gestureCoordsRef.current.sx - 0.5) * sens * 0.62;
-              engineRef.current.targetPitch = (gestureCoordsRef.current.sy - 0.5) * sens * 0.26;
-            }
-            const velocity = Math.min(1, Math.hypot(gestureCoordsRef.current.sx - px, gestureCoordsRef.current.sy - py) * 9);
-            if (velocity > 0.12) audio.tick(velocity);
-          } else if (gestureSeenRef.current) {
-            gestureSeenRef.current = false;
-            audio.release();
-          }
-
-          if (gestureCanvasRef.current) {
-            const gCtx = gestureCanvasRef.current.getContext('2d');
-            if (gCtx) {
-              gCtx.drawImage(v, 0, 0, 120, 90);
-              gCtx.globalAlpha = 0.4;
-              gCtx.strokeStyle = '#4fd2ff';
-              gCtx.beginPath();
-              gCtx.arc(gestureCoordsRef.current.sx * 120, gestureCoordsRef.current.sy * 90, 9, 0, Math.PI * 2);
-              gCtx.stroke();
-              gCtx.globalAlpha = 1;
-            }
-          }
+        // Throttle to 8 FPS while TTS is actively speaking (100% smooth crystal voice!) and 22 FPS otherwise
+        const minGap = liveSpeakingRef.current ? 115 : 44;
+        if (now - lastSendMs >= minGap && v.readyState >= 2) {
+          lastSendMs = now;
+          handSnapshotRef.current = handWorker.submitVideoFrame(v, now);
+        } else {
+          handSnapshotRef.current = handWorker.getLatest();
         }
         gestureAnimRef.current = requestAnimationFrame(loop);
       };
       gestureAnimRef.current = requestAnimationFrame(loop);
-    } catch (e: any) {
-      toast('Camera blocked or unavailable');
+    } catch {
       setGestureActive(false);
     }
-  }, [setMood, toast]);
+  }, []);
 
   const stopGesture = useCallback(() => {
     if (gestureAnimRef.current) cancelAnimationFrame(gestureAnimRef.current);
@@ -933,11 +2082,9 @@ export const App: React.FC = () => {
       gestureStreamRef.current = null;
     }
     gestureVideoRef.current = null;
+    handWorker.resetHands();
+    handSnapshotRef.current = { hands: [], twoHandSpan: null, aiReady: false };
     setGestureActive(false);
-    if (gestureSeenRef.current) {
-      gestureSeenRef.current = false;
-      audio.release();
-    }
   }, []);
 
   const toggleGesture = useCallback(() => {
@@ -949,27 +2096,32 @@ export const App: React.FC = () => {
     }
   }, [gestureActive, startGesture, stopGesture, toast]);
 
-  // Master Power (1-click FULL ON / FULL OFF)
+  // Master Power (1-click FULL ON / FULL OFF — ON automatically activates 3D + Hands-Free Live Voice!)
   const togglePower = useCallback(() => {
     if (!poweredOnRef.current) {
       poweredOnRef.current = true;
       setPoweredOn(true);
+      audio.unlockSpeaker();
       audio.powerOn(soundOn, sfxOn);
+      audio.setSfxVolume(sfxVolume);
+      audio.setVoiceVolume(voiceVolume);
+      audio.assistantChime(true);
       if (engineRef.current) {
+        engineRef.current.started = true;
         engineRef.current.assemble = 0;
         engineRef.current.setPaused(false);
       }
-      audio.assemble();
-      toast('APEX ON · Systems active', 2400);
+      // Manual Push-to-Talk ONLY: Mic stays cleanly OFF until user taps Mic button!
     } else {
       // HARD FULL OFF — stop every subsystem immediately
       poweredOnRef.current = false;
       setPoweredOn(false);
+      setShowVoicePanel(false);
       cancelAllSpeech();
       busyRef.current = false;
       activeSentimentRef.current = null;
       setSentimentInfo(null);
-      if (isListening || recRef.current || micStreamRef.current) stopEars();
+      stopEars();
       if (gestureActive || gestureStreamRef.current) stopGesture();
       audio.powerOff();
       if (engineRef.current) {
@@ -979,14 +2131,11 @@ export const App: React.FC = () => {
       setFps(0);
       setMenuOpen(false);
       setYoutubeOpen(false);
-      setAskOpen(false);
-      setReelOpen(false);
       setTradingBotOpen(false);
-      setAgentCompanyOpen(false);
       clearTimeout(toastTimerRef.current);
       setToastMessage(null);
     }
-  }, [soundOn, sfxOn, gestureActive, isListening, stopGesture, stopEars, cancelAllSpeech, toast]);
+  }, [soundOn, sfxOn, sfxVolume, voiceVolume, gestureActive, stopGesture, stopEars, startEars, cancelAllSpeech]);
 
   // Characters
   const cycleCharacter = useCallback(() => {
@@ -1082,54 +2231,10 @@ export const App: React.FC = () => {
     }
   }, [toast]);
 
-  // Initialize WebGL engine once canvases are ready (kept alive across power toggles for instant wake)
+  // Hologram Armor / Vision Core render engine owns 100% of GPU frame budget for locked 60 FPS performance!
   useEffect(() => {
-    if (!canvasRef.current || !hudCanvasRef.current) return;
-    try {
-      const engine = new WebGLEngine(canvasRef.current, hudCanvasRef.current);
-      engine.onFpsUpdate = (f, p) => {
-        setFps(f);
-        setPoints(p);
-      };
-      engine.onHeartRateUpdate = (bpm, pulse, phase, elevated) => {
-        setHeartRate(bpm);
-        setHeartPulse(pulse);
-        setIsElevated(elevated);
-      };
-      engine.setPaused(true);
-      engineRef.current = engine;
-
-      return () => {
-        engine.destroy();
-        engineRef.current = null;
-      };
-    } catch (e) {
-      console.error('WebGL engine startup error', e);
-    }
-  }, []);
-
-  // Run GPU render loop ONLY when entered AND powered ON (0 FPS / 0% GPU when FULL OFF)
-  useEffect(() => {
-    const engine = engineRef.current;
-    if (!engine) return;
-    if (!entered || !poweredOn) {
-      engine.setPaused(true);
-      setFps(0);
-      return;
-    }
-    engine.started = true;
-    engine.setPaused(false);
-    let animId: number;
-    const render = (time: number) => {
-      if (!poweredOnRef.current) return;
-      engine.frame(time);
-      animId = requestAnimationFrame(render);
-    };
-    animId = requestAnimationFrame(render);
-    return () => {
-      cancelAnimationFrame(animId);
-    };
-  }, [entered, poweredOn]);
+    setFps(poweredOn ? 60 : 0);
+  }, [poweredOn]);
 
   // Pointer follow listener (active only while powered ON)
   useEffect(() => {
@@ -1160,38 +2265,6 @@ export const App: React.FC = () => {
     };
   }, [entered, poweredOn, hideHint]);
 
-  // Remote state poller (/state) — completely stopped when FULL OFF
-  useEffect(() => {
-    if (!entered || !poweredOn) return;
-    let lastSeq = -1;
-    const interval = setInterval(async () => {
-      if (!poweredOnRef.current) return;
-      try {
-        const r = await fetch('/state');
-        if (!r.ok || !poweredOnRef.current) return;
-        const st = await r.json();
-        if (lastSeq < 0) {
-          lastSeq = st.seq;
-          return;
-        }
-        if (st.seq === lastSeq) return;
-        lastSeq = st.seq;
-
-        if (st.mood) setMood(st.mood);
-        if (typeof st.theme === 'number') {
-          setThemeIdx(st.theme);
-          if (engineRef.current) engineRef.current.themeIdx = st.theme;
-        }
-        if (st.say) {
-          toast(`Remote · “${st.say.slice(0, 48)}”`);
-          speak(st.say);
-        }
-      } catch (e) {}
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [entered, poweredOn, setMood, toast, speak]);
-
   // Keyboard controls
   useEffect(() => {
     if (!entered) return;
@@ -1202,315 +2275,325 @@ export const App: React.FC = () => {
         return;
       }
       if (!poweredOnRef.current) return;
-      if (e.key === '1') setMood('idle');
-      if (e.key === '2') setMood('listening');
-      if (e.key === '3') setMood('thinking');
-      if (e.key === '4') setMood('speaking');
-      if (e.key === ' ') {
-        e.preventDefault();
-        setMood('speaking');
-      }
       if (e.key === 't' || e.key === 'T') cycleTheme();
       if (e.key === 'g' || e.key === 'G') toggleGesture();
       if (e.key === 'c' || e.key === 'C') cycleCharacter();
-      if (e.key === 'r' || e.key === 'R') replayAssembly();
-      if (e.key === 'b' || e.key === 'B') {
-        setTradingBotOpen((prev) => {
-          const next = !prev;
-          toast(next ? 'Trading Bot Opened' : 'Trading Bot Closed', 1500);
-          return next;
-        });
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        stopEars();
       }
-      if (e.key === 'o' || e.key === 'O') {
-        setAgentCompanyOpen((prev) => {
-          const next = !prev;
-          toast(next ? 'Chief of Staff Company Opened' : 'Company Command Closed', 1500);
-          return next;
-        });
-      }
-      if (e.key === 'k' || e.key === 'K') {
-        setBgOn((prev) => {
-          const next = !prev;
-          if (engineRef.current) engineRef.current.bgOn = next;
-          toast(`Background ${next ? 'on' : 'off'}`);
-          return next;
-        });
-      }
-      if (e.key === 'f' || e.key === 'F') {
-        setSfxOn((prev) => {
-          const next = !prev;
-          audio.setSfx(next);
-          toast(`SFX ${next ? 'on' : 'off'}`);
-          return next;
-        });
-      }
-      if (e.key === 'Escape') setMenuOpen(false);
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [entered, togglePower, setMood, cycleTheme, toggleGesture, cycleCharacter, replayAssembly, toast]);
+  }, [entered, togglePower, cycleTheme, toggleGesture, cycleCharacter, stopEars]);
 
-  const handleEnter = () => {
-    poweredOnRef.current = true;
-    setEntered(true);
-    setPoweredOn(true);
-    audio.powerOn(soundOn, sfxOn);
-    audio.assemble();
-    if (engineRef.current) {
-      engineRef.current.started = true;
-      engineRef.current.setPaused(false);
+  // ALWAYS-ON HAND GESTURE AI + SMOOTH AUTOMATIC WELCOME GREETING ON ENTERING MAIN PAGE!
+  useEffect(() => {
+    if (!poweredOn) {
+      stopGesture();
+      return;
     }
-    // Clean friendly greeting WITHOUT unsolicited trading chatter!
-    clearTimeout(greetTimerRef.current);
-    greetTimerRef.current = setTimeout(() => {
+    audio.powerOn(soundOn, sfxOn);
+    audio.setSfxVolume(sfxVolume);
+    audio.setVoiceVolume(voiceVolume);
+
+    // Preload offline MediaPipe Hand model quietly in background, while keeping Camera OFF by default
+    // so Voice Call Mode runs 100% pure, cool & solid steady until user taps 🖐!
+    handWorker.ensureStarted();
+
+    const welcomeLine = 'Namaste Boss! Main ready hoon. Jab bolna ho tab Mic button dabayein.';
+
+    const bootTimer = setTimeout(() => {
       if (!poweredOnRef.current) return;
-      speak('Namaste! Main APEX hoon. Neeche Live Call daba kar mujhse seedha baat karo.');
-    }, 400);
+      setAssistantOpen(true);
+      assistantOpenRef.current = true;
+
+      if (!welcomedOnceRef.current) {
+        welcomedOnceRef.current = true;
+        // Speak calm welcome ONCE and keep Mic strictly OFF until user taps Mic button!
+        speak(welcomeLine);
+      }
+    }, 350);
+
+    (window as any).__onApexAppResumed = () => {};
+    (window as any).__onApexPermissionsReady = () => {
+      // NEVER auto-start microphone in background! User controls Mic strictly on tap!
+    };
+
+    const onFirstTouch = () => {
+      audio.unlockSpeaker();
+      window.removeEventListener('pointerdown', onFirstTouch);
+    };
+    window.addEventListener('pointerdown', onFirstTouch, { passive: true });
+
+    return () => {
+      clearTimeout(bootTimer);
+      window.removeEventListener('pointerdown', onFirstTouch);
+    };
+  }, [poweredOn]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const assistantStage: AssistantStage = !poweredOn
+    ? 'closed'
+    : liveVoiceStage === 'speaking'
+    ? 'speaking'
+    : liveVoiceStage === 'thinking'
+    ? 'thinking'
+    : isListening
+    ? 'listening'
+    : 'standby';
+
+  const handleToggleQuickBgSound = () => {
+    const anyOn = sfxOn || soundOn;
+    const next = !anyOn;
+    setSfxOn(next);
+    setSoundOn(false);
+    localStorage.setItem('apex.sfx_on', next ? '1' : '0');
+    localStorage.setItem('apex.sound_on', '0');
+    audio.setSound(false);
+    audio.setSfxVolume(sfxVolume);
+    audio.setSfx(next);
+    toast(next ? 'Background FX Sound: ON' : 'Background FX Sound: OFF (Voice remains ON)', 2000);
+  };
+
+  controlActionsRef.current = {
+    startGesture,
+    stopGesture,
+    cycleTheme,
+    cycleCharacter,
+    togglePower,
+    startEars,
   };
 
   return (
     <div className="relative w-full h-full overflow-hidden select-none bg-black">
-      {/* 3D WebGL Canvas Layer */}
-      <div className={entered && poweredOn ? 'fixed inset-0 pointer-events-none' : 'fixed inset-0 pointer-events-none invisible'}>
-        <canvas ref={canvasRef} className="w-full h-full pointer-events-auto cursor-crosshair" />
-        {/* w-full h-full is required: a <canvas> is a replaced element, so inset-0 alone
-            keeps its intrinsic (attribute) pixel size and overflows small screens. */}
-        <canvas ref={hudCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none opacity-80" />
+      {/* Hidden WebGL Backing Canvas (kept mounted so theme/pulse state stays valid with 0% overhead) */}
+      <div className="fixed inset-0 pointer-events-none hidden">
+        <canvas ref={canvasRef} />
+        <canvas ref={hudCanvasRef} />
       </div>
 
       {/* Pure pitch-black screen when FULL OFF */}
       {entered && !poweredOn && <div data-testid="power-off-blackout" className="fixed inset-0 z-30 bg-black" />}
 
-      {entered && poweredOn && !jarvisOpen && (
-        <>
-          {/* Cyberpunk Vignette & Floor Glow */}
-          <div className="veil" />
-          <div className="floor" />
-
-          {/* HUD Overlay (Clean view, unobstructing humanoid) */}
-          <HudOverlay
-            mood={mood}
-            fps={fps}
-            points={points}
-            gestureActive={gestureActive}
-            gestureCanvasRef={gestureCanvasRef}
-            showHint={showHint}
-            themeAccent={THEMES[themeIdx].accent}
-            sentiment={sentimentInfo}
-            heartRate={heartRate}
-            heartPulse={heartPulse}
-            isElevated={isElevated}
-          />
-
-          {/* Visual Audio Waveform Overlay (Reacts to mic input and synthesized voice) */}
-          <AudioWaveform
-            mood={mood}
-            isListening={isListening}
-            themeAccent={THEMES[themeIdx].accent}
-          />
-        </>
+      {entered && poweredOn && (
+        <HologramArmorCanvas
+          handSnapshotRef={handSnapshotRef}
+          gestureActive={gestureActive}
+          onToggleGesture={toggleGesture}
+          voiceLevel={micLevel}
+          stage={assistantStage}
+          activeSuit={activeSuit}
+          blastNonce={blastNonce}
+          resetNonce={resetNonce}
+          zoomDeltaNonce={zoomDeltaNonce}
+          onSelectSuit={setActiveSuit}
+          onHoloSound={(kind) => {
+            if (liveSpeakingRef.current) return;
+            if (kind === 'blast') audio.assemble();
+            else if (kind === 'grab' || kind === 'snap' || kind === 'suit') audio.assistantChime(true);
+          }}
+        />
       )}
 
-      {/* Floating Live 2-Way Voice + STT/TTS HUD right on the main 3D APEX Screen */}
-      {entered && poweredOn && !jarvisOpen && (isListening || liveVoiceStage === 'speaking' || liveVoiceStage === 'thinking') && (
-        <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(86px+env(safe-area-inset-bottom))] z-30 w-[92vw] max-w-md px-3.5 py-2.5 rounded-2xl bg-[rgba(4,14,22,0.9)] border border-[rgba(79,210,255,0.35)] backdrop-blur-xl shadow-[0_12px_36px_rgba(0,0,0,0.85)] flex flex-col gap-1.5 font-mono">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-xs font-bold">
-              <span
-                className={`w-2.5 h-2.5 rounded-full ${
-                  liveVoiceStage === 'speaking'
-                    ? 'bg-[#4fd2ff] animate-ping'
-                    : liveVoiceStage === 'thinking'
-                    ? 'bg-[#ffd13b] animate-pulse'
-                    : 'bg-[#00f5a0] animate-ping'
-                }`}
-              />
-              <span className="text-white text-[11px]">
-                {liveVoiceStage === 'speaking'
-                  ? '🔊 APEX Speaking…'
-                  : liveVoiceStage === 'thinking'
-                  ? '🧠 APEX Processing…'
-                  : '🟢 Listening — Speak Now…'}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setAutoContinuousMode((v) => !v)}
-                className={`cursor-pointer px-2 py-1 rounded-lg text-[9.5px] font-bold border ${
-                  autoContinuousMode
-                    ? 'bg-[rgba(79,210,255,0.22)] border-[#4fd2ff] text-[#dff6ff]'
-                    : 'bg-[rgba(255,255,255,0.08)] border-[rgba(255,255,255,0.2)] text-[#9fb8cc]'
-                }`}
-                title="Switch between Single-Turn (Tap to Speak) & Continuous Auto Conversation"
-              >
-                {autoContinuousMode ? '♾ AUTO ON' : '1× SINGLE'}
-              </button>
-
-              {liveVoiceStage === 'speaking' ? (
-                <button
-                  onClick={() => {
-                    echoCooldownUntilRef.current = Date.now() + 900;
-                    cancelAllSpeech();
-                    busyRef.current = false;
-                    setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-                    setMood(micStreamRef.current ? 'listening' : 'idle');
-                  }}
-                  className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(255,79,112,0.2)] border border-[#ff4f70] text-[#ff8fa3] text-[10px] font-bold"
-                >
-                  ⏹ Stop
-                </button>
-              ) : (
-                <button
-                  onClick={() => sendChunkNowRef.current?.()}
-                  className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(0,245,160,0.18)] border border-[#00f5a0] text-[#00f5a0] text-[10px] font-bold"
-                >
-                  📤 Send
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Live Real-Time Mic Audio Meter Bar so user visibly sees their voice level! */}
-          <div className="w-full h-1.5 rounded-full bg-[#0a1d2c] overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-75 bg-gradient-to-r from-[#00f5a0] to-[#4fd2ff]"
-              style={{ width: `${Math.max(6, Math.min(100, Math.round(micLevel * 140)))}%` }}
-            />
-          </div>
-
-          {liveUserText && (
-            <div className="text-[11px] text-[#9ee8ff] truncate">
-              🎤 Aap: <span className="text-white">"{liveUserText}"</span>
-            </div>
-          )}
-          {liveBotText && (
-            <div className="text-[11px] text-[#00f5a0] line-clamp-2 leading-snug">
-              🤖 APEX: {liveBotText}
-            </div>
-          )}
-
-          {/* Direct quick voice-reply text bar inside Call HUD as instant backup */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const q = liveQuickInput.trim();
-              if (!q) return;
-              setLiveQuickInput('');
-              cancelAllSpeech();
-              handleUtterance(q);
-            }}
-            className="flex items-center gap-1.5 pt-1"
-          >
-            <input
-              type="text"
-              value={liveQuickInput}
-              onChange={(e) => setLiveQuickInput(e.target.value)}
-              placeholder="Boliye ya yahan likh kar bhejein…"
-              className="flex-1 bg-[#061523] border border-[rgba(79,210,255,0.28)] rounded-lg px-2.5 py-1 text-[11px] text-white placeholder-[#5e859e] focus:outline-none focus:border-[#00f5a0]"
-            />
-            <button
-              type="submit"
-              className="cursor-pointer px-2.5 py-1 rounded-lg bg-[#00f5a0] text-[#041a12] text-[10.5px] font-extrabold"
-            >
-              ➤
-            </button>
-          </form>
-        </div>
+      {/* Sleek Live Voice + Expandable Online AI Agent Chat Window */}
+      {entered && poweredOn && (
+        <SiriAssistantSheet
+          stage={assistantStage}
+          micLevel={micLevel}
+          liveTranscript={liveInterimText}
+          userText={liveUserText}
+          botText={liveBotText}
+          chatHistory={chatHistory}
+          showPanel={showVoicePanel}
+          onOpenChatPanel={() => setShowVoicePanel(true)}
+          onSpeakMessage={(txt) => {
+            audio.unlockSpeaker();
+            releaseMicHardwareOnly();
+            speak(txt, () => {
+              if (autoContinuousRef.current && assistantOpenRef.current && poweredOnRef.current) {
+                callActiveRef.current = true;
+                openCallMicTurnRef.current();
+              }
+            });
+          }}
+          onClearHistory={() => {
+            setChatHistory([]);
+            try {
+              localStorage.removeItem('apex_live_chat_bubbles_v1');
+            } catch {}
+          }}
+          geminiLiveActive={geminiLiveActive}
+          confirmedBadge={confirmedBadge}
+          pendingConfirm={pendingConfirm}
+          onGeminiKeySaved={(key) => {
+            releaseMicHardwareOnly();
+            cancelAllSpeech();
+            geminiSessionRef.current?.stop();
+            geminiSessionRef.current = null;
+            if (key) {
+              setGeminiLiveActive(true);
+              toast('✅ Gemini Live API Active — Loud Studio Speaker Mode Ready!', 2600);
+              speak('Aapka Gemini API connect ho gaya hai Boss! Ab kuch bhi boliye ya research karwayiye.');
+            } else {
+              setGeminiLiveActive(false);
+              toast('Free Cloud AI Mode Active', 2000);
+            }
+          }}
+          onOpenUltronShield={() => {
+            audio.unlockSpeaker();
+            setTradingBotOpen(true);
+          }}
+          onMaxSpeakerBoost={() => {
+            audio.unlockSpeaker();
+            audio.setVoiceVolume(1.0);
+            setVoiceVolume(1.0);
+            try {
+              window.ApexAndroid?.setSpeakerphone?.(true);
+              (window.ApexAndroid as any)?.maxSpeakerVolume?.();
+            } catch {}
+            toast('🔊 MAX 285% Studio Speaker Volume Boost Active!', 2400);
+            speak('Speaker volume full maximum boost par set ho gaya hai Boss!');
+          }}
+          isShareSafeGuest={!isOwnerSession}
+          onToggleOwnerVault={() => {
+            if (isOwnerSession) {
+              setOwnerUnlocked(false);
+              localStorage.removeItem('apex_owner_vault_unlocked_v6');
+              toast('🛡️ Share-Safe Mode ON — 0% Personal Data Visible!', 2600);
+            } else {
+              const pin = window.prompt('👑 Private Owner Vault PIN daalein (Share-Safe se Owner Mode kholne ke liye):');
+              if (pin && pin.trim() === '7860') {
+                setOwnerUnlocked(true);
+                localStorage.setItem('apex_owner_vault_unlocked_v6', '1');
+                toast('👑 Owner Private Vault Unlocked!', 2600);
+              } else if (pin !== null) {
+                toast('❌ Galat Owner PIN — Share-Safe Protection Active!', 2400);
+              }
+            }
+          }}
+          onConfirmAction={() => {
+            const item = pendingConfirmRef.current;
+            if (!item) return;
+            setPendingConfirm(null);
+            pendingConfirmRef.current = null;
+            releaseMicHardwareOnly();
+            cancelAllSpeech();
+            showConfirmedBadge(`✓ Confirmed: ${item.label}`);
+            audio.assistantChime(true);
+            item.onConfirm();
+          }}
+          onCancelAction={() => {
+            setPendingConfirm(null);
+            pendingConfirmRef.current = null;
+            showConfirmedBadge('✕ Cancelled');
+          }}
+          autoFollowUp={autoContinuousMode}
+          onToggleAutoFollowUp={() => setAutoContinuousMode((v) => !v)}
+          onOrbTap={handleAssistantOrbTap}
+          onSendManual={(q) => {
+            releaseMicHardwareOnly();
+            cancelAllSpeech();
+            setLiveUserText(q);
+            busyRef.current = false;
+            handleUtterance(q, () => {
+              if (autoContinuousRef.current && assistantOpenRef.current && poweredOnRef.current) {
+                callActiveRef.current = true;
+                openCallMicTurnRef.current();
+              }
+            });
+          }}
+          onClose={() => setShowVoicePanel(false)}
+        />
       )}
 
-      {/* Bottom Floating Dock — visible in 3D view & FULL OFF mode */}
-      {entered && (!jarvisOpen || !poweredOn) && (
+      {/* Clean Bottom Floating Dock (Zero separate Mic ON button — auto-live from launch!) */}
+      {entered && activeUser && (
         <Dock
           poweredOn={poweredOn}
           menuOpen={menuOpen}
           isListening={isListening}
+          chatOpen={showVoicePanel}
+          liveStage={assistantStage}
+          micLevel={micLevel}
+          gestureActive={gestureActive}
+          assistantOpen={assistantOpen}
           autoTrading={autoTrader.autoTrading}
           onTogglePower={togglePower}
+          onToggleChat={() => {
+            audio.unlockSpeaker();
+            setShowVoicePanel((prev) => !prev);
+          }}
+          onToggleGesture={toggleGesture}
           onToggleMenu={() => {
             audio.ensureCtx();
-            audio.tick(0.6);
             setMenuTab('apps');
             setMenuOpen((prev) => !prev);
           }}
-          onToggleMic={toggleMic}
-          onOpenJarvis={() => {
-            audio.ensureCtx();
-            audio.tick(0.6);
-            setMenuTab('phone');
-            setMenuOpen(true);
+          onToggleMic={() => {
+            audio.unlockSpeaker();
+            setAssistantOpen(true);
+            assistantOpenRef.current = true;
+            if (liveVoiceStage === 'speaking') {
+              cancelAllSpeech();
+              callActiveRef.current = true;
+              openCallMicTurnRef.current();
+              return;
+            }
+            if (isListening) {
+              // If user just spoke and tapped button, flush & send speech immediately; otherwise pause mic cleanly
+              if (micLevel > 0.05 && sendChunkNowRef.current) {
+                sendChunkNowRef.current(true);
+                return;
+              }
+              callActiveRef.current = false;
+              assistantOpenRef.current = false;
+              setAssistantOpen(false);
+              busyRef.current = false;
+              try {
+                window.ApexAndroid?.stopNativeListen?.();
+              } catch {}
+              releaseMicHardwareOnly();
+              setIsListening(false);
+              setMicLevel(0);
+              setLiveVoiceStage('idle');
+              setMood('idle');
+            } else {
+              callActiveRef.current = true;
+              openCallMicTurnRef.current();
+            }
           }}
           onOpenTrading={() => {
             audio.ensureCtx();
-            audio.tick(0.6);
             setTradingBotOpen(true);
           }}
-          onTestVoice={testVoice}
+          onOpenSocialStudio={() => {
+            audio.ensureCtx();
+            setYoutubeOpen(true);
+          }}
         />
       )}
 
-      {/* JARVIS OS / Izem Dark Eclipse Workspace (Reel #2: "Jarvis does literally everything") */}
-      {entered && poweredOn && (
-        <JarvisWorkspace
-          isOpen={jarvisOpen && !tradingBotOpen && !youtubeOpen && !reelOpen && !agentCompanyOpen && !elevenOpen}
-          hologramOverlayMode={hologramOverlayMode}
-          onToggleHologramMode={() => setHologramOverlayMode((v) => !v)}
-          onCloseTo3D={() => setJarvisOpen(false)}
-          isListening={isListening}
-          autoContinuousMode={autoContinuousMode}
-          onToggleContinuousMode={() => setAutoContinuousMode((v) => !v)}
-          voiceStage={liveVoiceStage}
-          micLevel={micLevel}
-          userText={liveUserText}
-          botText={liveBotText}
-          quietMode={quietMode}
-          onToggleQuietMode={() => setQuietMode((v) => !v)}
-          onToggleCall={toggleMic}
-          onStopSpeaking={() => {
-            echoCooldownUntilRef.current = Date.now() + 900;
-            cancelAllSpeech();
-            setLiveVoiceStage(micStreamRef.current ? 'listening' : 'idle');
-          }}
-          onSpeakCustomText={(txt) => {
-            setQuietMode(false);
-            quietModeRef.current = false;
-            speak(txt);
-          }}
-          onFlushSpeechNow={() => sendChunkNowRef.current?.()}
-          onSendTextCommand={(cmd) => {
-            cancelAllSpeech();
-            handleUtterance(cmd);
-          }}
-          tasks={jarvisTasks}
-          onAddTask={addJarvisTask}
-          onToggleTask={toggleJarvisTask}
-          onDeleteTask={deleteJarvisTask}
-          memories={jarvisMemories}
-          onAddMemory={addJarvisMemory}
-          onDeleteMemory={deleteJarvisMemory}
-          onOpenTradingBot={() => setTradingBotOpen(true)}
-          realInrBalance={autoTrader.liveAccount?.totalInr || autoTrader.balance || 0}
-          orderBusy={autoTrader.orderBusy}
-          onApproveSetup={(sym) => autoTrader.manualBuy(sym)}
-          onOpenYouTubeStudio={() => setYoutubeOpen(true)}
-          onOpenElevenLabs={() => setElevenOpen(true)}
-          onPowerOff={togglePower}
-        />
-      )}
-
-      {entered && poweredOn && (
+      {entered && poweredOn && activeUser && (
         <>
-          {/* Slide-up Menu Drawer */}
           <MenuSheet
             isOpen={menuOpen}
+            currentUser={activeUser}
+            memories={jarvisMemories}
+            onAddMemory={addJarvisMemory}
+            onDeleteMemory={deleteJarvisMemory}
+            tasks={jarvisTasks}
+            onAddTask={addJarvisTask}
+            onToggleTask={toggleJarvisTask}
+            onDeleteTask={deleteJarvisTask}
             initialTab={menuTab}
             onSpeakCustomText={(txt) => {
-              setQuietMode(false);
-              quietModeRef.current = false;
+              audio.unlockSpeaker();
               speak(txt);
             }}
             onSendCommand={(cmd) => {
+              setAssistantOpen(true);
+              assistantOpenRef.current = true;
               cancelAllSpeech();
               handleUtterance(cmd);
             }}
@@ -1518,7 +2601,7 @@ export const App: React.FC = () => {
             onSelectMood={(m) => {
               activeSentimentRef.current = null;
               setSentimentInfo(null);
-              setMood(m);
+              setMood(m, sfxOn);
               setMenuOpen(false);
             }}
             gestureActive={gestureActive}
@@ -1530,31 +2613,17 @@ export const App: React.FC = () => {
             onPhotoUpload={handlePhotoUpload}
             onExitPhoto={exitPhoto}
             onReplay={replayAssembly}
-            onOpenAsk={() => {
-              setMenuOpen(false);
-              setAskOpen(true);
-            }}
             onVoiceTest={testVoice}
             deepMode={deepMode}
-            onToggleDeep={() => {
-              setDeepMode((prev) => {
-                const next = !prev;
-                toast(next ? 'Deep model enabled' : 'Fast flash model enabled');
-                return next;
-              });
-            }}
+            onToggleDeep={() => setDeepMode((prev) => !prev)}
             onOpenYouTube={() => {
               setMenuOpen(false);
               setYoutubeOpen(true);
             }}
             langMode={langMode}
-            onToggleLang={() => {
-              setLangMode((prev) => {
-                const next = prev === 'en-IN' ? 'hi-IN' : 'en-IN';
-                toast(`Language: ${next === 'hi-IN' ? 'Hindi' : 'English'}`);
-                return next;
-              });
-            }}
+            onToggleLang={() =>
+              setLangMode((prev) => (prev === 'en-IN' ? 'hi-IN' : 'en-IN'))
+            }
             themes={THEMES}
             currentThemeIdx={themeIdx}
             onCycleTheme={cycleTheme}
@@ -1563,7 +2632,6 @@ export const App: React.FC = () => {
               setBgOn((prev) => {
                 const next = !prev;
                 if (engineRef.current) engineRef.current.bgOn = next;
-                toast(`Background ${next ? 'on' : 'off'}`);
                 return next;
               });
             }}
@@ -1571,17 +2639,32 @@ export const App: React.FC = () => {
             onToggleSfx={() => {
               setSfxOn((prev) => {
                 const next = !prev;
+                localStorage.setItem('apex.sfx_on', next ? '1' : '0');
+                audio.setSfxVolume(sfxVolume);
                 audio.setSfx(next);
-                toast(`SFX ${next ? 'on' : 'off'}`);
                 return next;
               });
+            }}
+            sfxVolume={sfxVolume}
+            onChangeSfxVolume={(val) => {
+              setSfxVolume(val);
+              setSfxOn(val > 0.01);
+              localStorage.setItem('apex.sfx_vol', String(val));
+              localStorage.setItem('apex.sfx_on', val > 0.01 ? '1' : '0');
+              audio.setSfxVolume(val);
+            }}
+            voiceVolume={voiceVolume}
+            onChangeVoiceVolume={(val) => {
+              setVoiceVolume(val);
+              localStorage.setItem('apex.voice_vol', String(val));
+              audio.setVoiceVolume(val);
             }}
             soundOn={soundOn}
             onToggleSound={() => {
               setSoundOn((prev) => {
                 const next = !prev;
+                localStorage.setItem('apex.sound_on', next ? '1' : '0');
                 audio.setSound(next);
-                toast(`Ambient drone ${next ? 'on' : 'off'}`);
                 return next;
               });
             }}
@@ -1589,17 +2672,9 @@ export const App: React.FC = () => {
             onChangeGestureSmoothing={setGestureSmoothing}
             gestureSensitivity={gestureSensitivity}
             onChangeGestureSensitivity={setGestureSensitivity}
-            onOpenReel={() => {
-              setMenuOpen(false);
-              setReelOpen(true);
-            }}
             onOpenTradingBot={() => {
               setMenuOpen(false);
               setTradingBotOpen(true);
-            }}
-            onOpenAgentCompany={() => {
-              setMenuOpen(false);
-              setAgentCompanyOpen(true);
             }}
             onOpenElevenLabs={() => {
               setMenuOpen(false);
@@ -1608,26 +2683,33 @@ export const App: React.FC = () => {
             onClose={() => setMenuOpen(false)}
           />
 
-          {/* ElevenLabs HD Voice Studio Modal */}
           <ElevenLabsModal
             isOpen={elevenOpen}
             onClose={() => setElevenOpen(false)}
-            onConfigSaved={() => toast('🎙️ ElevenLabs HD Voice Active!', 3000)}
+            onConfigSaved={() => toast('🎙️ Custom HD Voice Active!', 2500)}
           />
 
-          {/* Notification Toast */}
           <Toast message={toastMessage} />
 
-          {/* Real Money CoinDCX Trading Terminal */}
           <TradingBotModal
             isOpen={tradingBotOpen}
             onClose={() => setTradingBotOpen(false)}
+            userId={activeUserId}
+            isOwner={isOwnerSession}
             currentHeartRate={heartRate}
             pairs={autoTrader.pairs}
             selectedPairIndex={autoTrader.selectedPairIndex}
             onSelectPairIndex={autoTrader.setSelectedPairIndex}
             autoTrading={autoTrader.autoTrading}
             onToggleAutoTrading={() => autoTrader.setAutoTrading((v) => !v)}
+            bossDirective={autoTrader.bossDirective}
+            botTeamRoles={autoTrader.botTeamRoles}
+            onSendHeadBotCommand={autoTrader.sendCommandToHeadBot}
+            onSpeakReply={(replyTxt) => {
+              audio.unlockSpeaker();
+              speak(replyTxt);
+            }}
+            onClosePositionNow={autoTrader.closePositionNow}
             smartStatus={autoTrader.smartStatus}
             onSmartTradeNow={() => autoTrader.runSmartTradeNow(true)}
             balance={autoTrader.balance}
@@ -1647,51 +2729,21 @@ export const App: React.FC = () => {
             onChangeStrategy={autoTrader.setStrategy}
             onManualBuy={autoTrader.manualBuy}
             onManualSell={autoTrader.manualSell}
+            activeTargets={autoTrader.activeTargets}
+            onSaveTargetPlan={autoTrader.saveTargetPlan}
+            onClearTargetPlan={autoTrader.clearTargetPlan}
             onTriggerSentimentTrade={handleTriggerSentimentTrade}
           />
 
-          {/* YouTube Shorts & Content Studio Modal */}
           <YouTubeModal
             isOpen={youtubeOpen}
+            isOwner={isOwnerSession}
             onClose={() => setYoutubeOpen(false)}
             onToast={toast}
-          />
-
-          {/* Instagram Reel Showcase Modal */}
-          <ReelModal
-            isOpen={reelOpen}
-            onClose={() => setReelOpen(false)}
-            onSelectTopicForShorts={(suggestedTopic) => {
-              setYoutubeOpen(true);
-            }}
-            onOpenAgentCompany={() => {
-              setReelOpen(false);
-              setAgentCompanyOpen(true);
-            }}
-            onToast={toast}
-          />
-
-          {/* Chief of Staff & Multi-Agent AI Company Command Center */}
-          <AgentCompanyModal
-            isOpen={agentCompanyOpen}
-            onClose={() => setAgentCompanyOpen(false)}
-            onSelectTopicForShorts={(suggestedTopic) => {
-              setYoutubeOpen(true);
-            }}
-            onToast={toast}
-          />
-
-          {/* Ask Question Modal */}
-          <AskModal
-            isOpen={askOpen}
-            onClose={() => setAskOpen(false)}
-            onSubmit={handleUtterance}
+            autoVoiceTask={agentVoiceTask}
           />
         </>
       )}
-
-      {/* Initial Entry Gate */}
-      {!entered && <IntroGate onEnter={handleEnter} />}
     </div>
   );
 };

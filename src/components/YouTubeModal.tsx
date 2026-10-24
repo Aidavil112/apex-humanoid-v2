@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { hubFetch } from '../engine/api';
 import { YtPlan, ContentPlan, TopicResearch, WorkflowJob, WorkflowStep } from '../types';
+import { AgentTeamPanel } from './AgentTeamPanel';
 
 interface YouTubeModalProps {
   isOpen: boolean;
+  isOwner?: boolean;
   onClose: () => void;
   onToast: (msg: string) => void;
+  autoVoiceTask?: { action?: 'make_and_save' | 'upload_saved' | 'open_only' | 'headbot_autopilot'; topic: string; refUrl?: string; nonce: number } | null;
 }
 
 const DEFAULT_NICHES = [
@@ -17,8 +20,8 @@ const DEFAULT_NICHES = [
   'Biohacking & Longevity',
 ];
 
-export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onToast }) => {
-  const [tab, setTab] = useState<'autopilot' | 'research' | 'video' | 'content' | 'history'>('autopilot');
+export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = false, onClose, onToast, autoVoiceTask }) => {
+  const [tab, setTab] = useState<'agents41' | 'autopilot' | 'research' | 'video' | 'content' | 'history'>('agents41');
   const [niche, setNiche] = useState('Future AI & Robotics');
   const [topic, setTopic] = useState('');
   const [lang, setLang] = useState('hi');
@@ -66,6 +69,12 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
   const verifyYouTubeConnection = async (tokOverride?: string) => {
     const tok = extractCleanToken(tokOverride !== undefined ? tokOverride : accessToken);
     if (tok && tok !== accessToken) setAccessToken(tok);
+    // STRICT SHARE-SAFE PRIVACY SHIELD: Never expose Owner's server-saved YouTube channel unless Owner unlocked OR reviewer pasted their OWN token!
+    if (!isOwner && !tok) {
+      setYtServerConnected(false);
+      setYtChannelName('');
+      return false;
+    }
     setYtChecking(true);
     try {
       const r = await hubFetch('/yt/status', {
@@ -430,12 +439,15 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
     setWorkflowStatus('uploading');
     setWorkflowProgress(90);
 
-    const reader = new FileReader();
-    const base64Promise = new Promise<string>((resolve) => {
-      reader.onloadend = () => resolve(reader.result as string);
-      reader.readAsDataURL(blob);
-    });
-    const videoBase64 = await base64Promise;
+    // Convert raw video binary directly to pure RFC-4648 Base64 (eliminates Android `video/webm;codecs=vp8,opus;base64,` atob() error!)
+    const ab = await blob.arrayBuffer();
+    const u8 = new Uint8Array(ab);
+    const CHUNK = 0x8000;
+    const parts: string[] = [];
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      parts.push(String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + CHUNK))));
+    }
+    const videoBase64 = btoa(parts.join(''));
 
     const res = await hubFetch('/yt/upload', {
       method: 'POST',
@@ -597,11 +609,11 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
           <div className="flex items-center gap-2">
             <span className="text-[#4fd2ff] text-base">⚡</span>
             <div>
-              <div className="text-[13px] tracking-[0.22em] text-[#7fd4ff] font-semibold uppercase">
-                YOUTUBE WORKFLOW AI AGENT
+              <div className="text-[13px] tracking-[0.2em] text-[#7fd4ff] font-semibold uppercase">
+                41-AGENT AI SOCIAL &amp; YOUTUBE STUDIO
               </div>
               <div className="text-[10px] text-[#55829e] tracking-wider">
-                Autonomous Topic Research · Scripting · Video Synthesis · YouTube Publisher
+                💾 Save-First Vault · 📸 Instagram Reels · 📘 Facebook Video · ▶️ YouTube Shorts · 41 AI Agents
               </div>
             </div>
           </div>
@@ -614,7 +626,17 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
         </div>
 
         {/* Navigation Tabs */}
-        <div className="grid grid-cols-5 gap-1.5 mb-4 p-1 bg-[#050c12] rounded-xl border border-[rgba(79,210,255,0.1)] text-[10px] sm:text-[11px]">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 mb-4 p-1 bg-[#050c12] rounded-xl border border-[rgba(79,210,255,0.1)] text-[10px] sm:text-[11px]">
+          <button
+            onClick={() => setTab('agents41')}
+            className={`cursor-pointer py-2 rounded-lg font-extrabold tracking-wider transition-colors ${
+              tab === 'agents41'
+                ? 'bg-gradient-to-r from-[#00f5a0] to-[#38bdf8] text-[#041812] shadow-sm'
+                : 'text-[#89e0ff] hover:text-white'
+            }`}
+          >
+            📸 IG·FB·YT
+          </button>
           <button
             onClick={() => setTab('autopilot')}
             className={`cursor-pointer py-2 rounded-lg font-semibold tracking-wider transition-colors ${
@@ -623,7 +645,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
                 : 'text-[#6c9cb7] hover:text-[#c9f2ff]'
             }`}
           >
-            🤖 AUTOPILOT
+            🤖 YT AUTO
           </button>
           <button
             onClick={() => setTab('research')}
@@ -666,6 +688,9 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, onClose, onT
             📊 QUEUE ({jobHistory.length})
           </button>
         </div>
+
+        {/* ==================== TAB 0: 41-AGENT AI SOCIAL MEDIA TEAM (REEL De0iz1ppxaZ!) ==================== */}
+        {tab === 'agents41' && <AgentTeamPanel onToast={onToast} autoVoiceTask={autoVoiceTask} />}
 
         {/* 1. AUTOPILOT AGENT VIEW */}
         {tab === 'autopilot' && (

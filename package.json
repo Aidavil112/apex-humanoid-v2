@@ -19,6 +19,7 @@
     "node": ">=18"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.18",
     "cors": "^2.8.5",
     "d3": "^7.9.0",
     "dotenv": "^16.4.7",

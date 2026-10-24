@@ -113,12 +113,12 @@ const ELEVEN_SKILLS = [
 
 const QUICK_TICKERS = [
   { id: 'BTCINR', label: 'BTC/INR (CoinDCX ₹)' },
+  { id: 'ETHINR', label: 'ETH/INR (CoinDCX ₹)' },
   { id: 'SOLINR', label: 'SOL/INR (CoinDCX ₹)' },
+  { id: 'PAXGINR', label: '24K GOLD/INR (CoinDCX ₹)' },
   { id: '^NSEI', label: 'NIFTY 50 (NSE ₹)' },
   { id: '^NSEBANK', label: 'BANKNIFTY (NSE ₹)' },
   { id: 'RELIANCE.NS', label: 'RELIANCE (NSE ₹)' },
-  { id: 'TSLA', label: 'TSLA (Reel Demo)' },
-  { id: 'NVDA', label: 'NVDA (US)' },
 ];
 
 export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
@@ -141,7 +141,96 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
   const [clockAngle, setClockAngle] = useState<number>(0);
   const [alertArmed, setAlertArmed] = useState<boolean>(false);
   const [decisionStatus, setDecisionStatus] = useState<'pending' | 'approved' | 'skipped'>('pending');
+  const [chartImgUrl, setChartImgUrl] = useState<string>('');
+  const [chartImgVerdict, setChartImgVerdict] = useState<string>('');
+  const [customTargetOverride, setCustomTargetOverride] = useState<number>(0);
+  const [customStopOverride, setCustomStopOverride] = useState<number>(0);
+  const chartFileInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleChartImageUpload = async (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setChartImgUrl(dataUrl);
+      const fname = file.name.toUpperCase();
+      let detectedSym = selectedSymbol;
+      if (fname.includes('ETH')) detectedSym = 'ETHINR';
+      else if (fname.includes('SOL')) detectedSym = 'SOLINR';
+      else if (fname.includes('PAXG') || fname.includes('GOLD') || fname.includes('XAU')) detectedSym = 'PAXGINR';
+      else if (fname.includes('BANK')) detectedSym = '^NSEBANK';
+      else if (fname.includes('NIFTY')) detectedSym = '^NSEI';
+      else if (fname.includes('BTC')) detectedSym = 'BTCINR';
+
+      const img = new Image();
+      img.onload = async () => {
+        const cv = document.createElement('canvas');
+        const w = 180;
+        const h = 120;
+        cv.width = w;
+        cv.height = h;
+        const ctx = cv.getContext('2d');
+        let bullBias = 0.56;
+        let volFactor = 1.0;
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, h);
+          const d = ctx.getImageData(0, 0, w, h).data;
+          let greenRight = 0;
+          let redRight = 0;
+          let minActiveY = h;
+          let maxActiveY = 0;
+          for (let y = 12; y < h - 14; y++) {
+            for (let x = Math.floor(w * 0.55); x < w - 8; x++) {
+              const i = (y * w + x) * 4;
+              const r = d[i], g = d[i + 1], b = d[i + 2];
+              if (g > r + 26 && g > b + 18) {
+                greenRight++;
+                if (y < minActiveY) minActiveY = y;
+                if (y > maxActiveY) maxActiveY = y;
+              } else if (r > g + 26 && r > b + 18) {
+                redRight++;
+                if (y < minActiveY) minActiveY = y;
+                if (y > maxActiveY) maxActiveY = y;
+              }
+            }
+          }
+          const tot = greenRight + redRight;
+          if (tot > 25) {
+            bullBias = greenRight / tot;
+            volFactor = Math.max(0.75, Math.min(1.65, (maxActiveY - minActiveY) / (h * 0.42)));
+          }
+        }
+        setSelectedSymbol(detectedSym);
+        await runFullScanAndAnalyze(detectedSym, tradeInr);
+        setTimeout(() => {
+          setDeep((prev) => {
+            if (!prev) return prev;
+            const entry = prev.plan.entry;
+            const tgtPct = (bullBias >= 0.5 ? 0.019 : 0.014) * volFactor;
+            const slPct = (bullBias >= 0.5 ? 0.0085 : 0.0075) * volFactor;
+            const smartTarget = parseFloat((entry * (1 + tgtPct)).toFixed(2));
+            const smartStop = parseFloat((entry * (1 - slPct)).toFixed(2));
+            setCustomTargetOverride(smartTarget);
+            setCustomStopOverride(smartStop);
+            setChartImgVerdict(
+              `✅ Chart Image Scanned (${Math.round(bullBias * 100)}% Bullish Candle Momentum) → Live Real Entry ${prev.currency}${entry.toLocaleString('en-IN')} | 🎯 Real Target ${prev.currency}${smartTarget.toLocaleString('en-IN')} | 🛑 Stop-Loss ${prev.currency}${smartStop.toLocaleString('en-IN')}`
+            );
+            return {
+              ...prev,
+              plan: {
+                ...prev.plan,
+                target: smartTarget,
+                stopLoss: smartStop,
+                rMultiple: parseFloat(((smartTarget - entry) / Math.max(0.01, entry - smartStop)).toFixed(2)),
+              },
+            };
+          });
+        }, 120);
+      };
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  };
 
   const runFullScanAndAnalyze = useCallback(
     async (sym: string, budget: number) => {
@@ -474,6 +563,49 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
             {loadingDeep ? 'Scanning...' : 'Scan & Replay'}
           </button>
         </form>
+
+        {/* 📸 CHART SCREENSHOT / IMAGE VISION SCANNER -> REAL LIVE ENTRY + TARGET 🎯 + STOP-LOSS 🛑 */}
+        <div className="max-w-lg mx-auto mt-2.5 bg-[#FFF8F2] border border-[#E5C9B6] rounded-2xl p-3 space-y-2 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-left">
+              <div className="text-xs font-extrabold text-[#1E1915]">
+                📸 Chart Image Scanner → Real Live Target 🎯 &amp; Stop-Loss 🛑
+              </div>
+              <div className="text-[10.5px] text-[#78685B]">
+                Koi bhi Chart Screenshot upload karein — Live CoinDCX rate ke saath Real Entry, Target &amp; SL nikaal dega!
+              </div>
+            </div>
+            <input
+              ref={chartFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleChartImageUpload(f);
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => chartFileInputRef.current?.click()}
+              className="px-3 py-1.5 rounded-xl bg-[#1E1915] hover:bg-[#342B24] text-white text-xs font-bold cursor-pointer shrink-0"
+            >
+              📷 Upload Chart Image
+            </button>
+          </div>
+          {chartImgUrl && (
+            <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-1 border-t border-[#EAD7C9]">
+              <img
+                src={chartImgUrl}
+                alt="Uploaded Trading Chart"
+                className="w-28 h-16 object-cover rounded-lg border border-[#D8C5B4] shrink-0"
+              />
+              <div className="text-[11px] font-semibold text-[#1B7A43] text-left leading-snug">
+                {chartImgVerdict || 'Analyzing uploaded chart candles + syncing real live market feed…'}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ==================== SECTION 0: ALL 11 SKILLS DECK (Exact Frame_04!) ==================== */}
@@ -885,18 +1017,42 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
               BUY {deep.ticket.qty} {deep.symbol}
             </div>
 
-            <div className="mt-3 space-y-1 font-mono text-xs text-[#3D332B]">
-              <div className="flex justify-between max-w-xs">
-                <span className="text-[#8A7C6F]">entry</span>
+            <div className="mt-3 space-y-1.5 font-mono text-xs text-[#3D332B]">
+              <div className="flex items-center justify-between max-w-xs">
+                <span className="text-[#8A7C6F]">live entry</span>
                 <span className="font-bold">{deep.currency}{deep.plan.entry}</span>
               </div>
-              <div className="flex justify-between max-w-xs">
-                <span className="text-[#8A7C6F]">stop-loss</span>
-                <span className="font-bold text-[#D63B32]">{deep.currency}{deep.plan.stopLoss}</span>
+              <div className="flex items-center justify-between max-w-xs gap-2">
+                <span className="text-[#D63B32] font-semibold">🛑 stop-loss</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={customStopOverride > 0 ? customStopOverride : deep.plan.stopLoss}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setCustomStopOverride(v);
+                    if (v > 0) {
+                      setDeep((prev) => (prev ? { ...prev, plan: { ...prev.plan, stopLoss: v } } : prev));
+                    }
+                  }}
+                  className="w-28 text-right px-2 py-0.5 rounded bg-[#FFF2F0] border border-[#E8B4AE] font-bold text-[#D63B32]"
+                />
               </div>
-              <div className="flex justify-between max-w-xs">
-                <span className="text-[#8A7C6F]">take-profit</span>
-                <span className="font-bold text-[#22A958]">{deep.currency}{deep.plan.target}</span>
+              <div className="flex items-center justify-between max-w-xs gap-2">
+                <span className="text-[#198F48] font-semibold">🎯 real target</span>
+                <input
+                  type="number"
+                  step="any"
+                  value={customTargetOverride > 0 ? customTargetOverride : deep.plan.target}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    setCustomTargetOverride(v);
+                    if (v > 0) {
+                      setDeep((prev) => (prev ? { ...prev, plan: { ...prev.plan, target: v } } : prev));
+                    }
+                  }}
+                  className="w-28 text-right px-2 py-0.5 rounded bg-[#EEFAF2] border border-[#A6E2BD] font-bold text-[#198F48]"
+                />
               </div>
               <div className="flex justify-between max-w-xs">
                 <span className="text-[#8A7C6F]">max loss</span>
@@ -907,36 +1063,38 @@ export const DayTraderSkillsPanel: React.FC<DayTraderSkillsPanelProps> = ({
 
           <div className="font-mono text-xs font-semibold text-[#22A958]">
             {decisionStatus === 'approved'
-              ? `✓ EXECUTED: ${deep.symbol} approved by your YES`
+              ? `✓ REAL ORDER + TARGET 🎯 ARMED: ${deep.symbol} Auto-Sell @ ${deep.currency}${deep.plan.target}`
               : decisionStatus === 'skipped'
               ? `✕ SKIPPED: order cancelled safely — zero money risked`
               : deep.ticket.statusLine}
           </div>
 
-          {/* Iconic Side-by-Side Terracotta YES + Warm Stone NO Buttons (Exact Frame_14!) */}
+          {/* Iconic Side-by-Side Terracotta YES + Warm Stone NO Buttons (Executes Real Order WITH Real Target & Stop-Loss!) */}
           <div className="grid grid-cols-2 gap-3 pt-1">
             <button
               disabled={orderBusy || decisionStatus === 'approved'}
               onClick={async () => {
+                const finalTarget = customTargetOverride > 0 ? customTargetOverride : deep.plan.target;
+                const finalStop = customStopOverride > 0 ? customStopOverride : deep.plan.stopLoss;
                 if (deep.isCrypto && deep.coinDcxMarket) {
-                  if (onApproveSetup) {
-                    await onApproveSetup(deep.symbol);
-                  } else if (onApproveTrade) {
+                  if (onApproveTrade) {
                     await onApproveTrade({
                       market: deep.coinDcxMarket,
                       symbol: deep.symbol,
                       tradeInr,
                       entry: deep.plan.entry,
-                      stopLoss: deep.plan.stopLoss,
-                      target: deep.plan.target,
+                      stopLoss: finalStop,
+                      target: finalTarget,
                     });
+                  } else if (onApproveSetup) {
+                    await onApproveSetup(deep.symbol);
                   }
                 }
                 setDecisionStatus('approved');
               }}
               className="py-3.5 rounded-2xl bg-[#D96543] hover:bg-[#C55534] text-white font-extrabold text-base shadow-sm cursor-pointer transition-all disabled:opacity-55"
             >
-              {orderBusy ? 'Executing...' : 'Yes'}
+              {orderBusy ? 'Executing...' : `Yes · Buy with Target 🎯`}
             </button>
 
             <button

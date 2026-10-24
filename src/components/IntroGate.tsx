@@ -1,4 +1,5 @@
 import React from 'react';
+import { SiriOrbGraphic } from './SiriAssistantSheet';
 
 interface IntroGateProps {
   onEnter: () => void;
@@ -6,22 +7,22 @@ interface IntroGateProps {
 
 export const IntroGate: React.FC<IntroGateProps> = ({ onEnter }) => {
   return (
-    <div className="fixed inset-0 z-40 grid place-content-center text-center bg-[radial-gradient(60%_60%_at_50%_50%,#060d14_0%,#03060a_70%,#000_100%)] select-none">
-      <h1 className="m-0 text-[16px] sm:text-[18px] tracking-[0.52em] text-[#bfe6ff] font-medium indent-[0.52em]">
-        APEX HUMANOID
+    <div className="fixed inset-0 z-40 flex flex-col items-center justify-center text-center bg-[radial-gradient(60%_60%_at_50%_50%,#07111c_0%,#03070c_70%,#000_100%)] select-none px-6">
+      <div className="mb-6">
+        <SiriOrbGraphic active stage="speaking" size="sheet" />
+      </div>
+      <h1 className="m-0 text-[18px] sm:text-[21px] tracking-[0.42em] text-white font-semibold indent-[0.42em]">
+        APEX AI
       </h1>
-      <p className="mt-3.5 text-[11px] tracking-[0.16em] text-[#4a7c98] lowercase">
-        a figure of light that assembles itself
+      <p className="mt-2.5 text-[12px] tracking-[0.06em] text-[#7ea6c2]">
+        3D Intelligent Assistant · Day Trader · Phone Control
       </p>
       <button
         onClick={onEnter}
-        className="cursor-pointer mx-auto mt-8 px-8 py-3.5 font-mono text-[11px] tracking-[0.34em] text-[#9fd8f5] indent-[0.34em] bg-[rgba(6,20,30,0.7)] border border-[rgba(79,210,255,0.35)] rounded-xl transition-all duration-300 hover:text-[#eafaff] hover:border-[rgba(79,210,255,0.9)] hover:bg-[rgba(10,34,50,0.85)] hover:shadow-[0_0_34px_-8px_rgba(79,210,255,0.6)]"
+        className="cursor-pointer mt-8 px-9 py-3.5 rounded-full font-sans text-[13px] font-semibold tracking-[0.14em] uppercase text-[#04141f] bg-gradient-to-r from-[#00f5d4] via-[#4fd2ff] to-[#9b7cff] shadow-[0_12px_38px_rgba(79,210,255,0.42)] hover:scale-[1.03] active:scale-[0.98] transition-all"
       >
-        ENTER
+        Start APEX
       </button>
-      <small className="block mt-5 text-[9.5px] tracking-[0.14em] text-[#2c4f63]">
-        click begins assembly · enables audio & visual engine
-      </small>
     </div>
   );
 };

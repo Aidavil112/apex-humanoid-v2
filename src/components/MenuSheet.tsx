@@ -1,9 +1,31 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { CharacterConfig, MoodType, ThemeConfig } from '../types';
 import { executePhoneAction } from '../engine/phoneBridge';
+import { audio } from '../engine/audio';
+import { loadElevenConfig } from '../engine/elevenlabs';
+import { JarvisMemoryItem, JarvisTaskItem } from './JarvisWorkspace';
+import {
+  ApexMemberProfile,
+  loadMembers,
+  addMemberByOwner,
+  removeMemberByOwner,
+  isLoginGateRequired,
+  setLoginGateRequired,
+  updateOwnerPin,
+} from '../engine/authStore';
 
 interface MenuSheetProps {
   isOpen: boolean;
+  currentUser?: ApexMemberProfile;
+  onSwitchUser?: (user: ApexMemberProfile) => void;
+  onLogout?: () => void;
+  memories?: JarvisMemoryItem[];
+  onAddMemory?: (text: string) => void;
+  onDeleteMemory?: (id: string) => void;
+  tasks?: JarvisTaskItem[];
+  onAddTask?: (title: string) => void;
+  onToggleTask?: (id: string) => void;
+  onDeleteTask?: (id: string) => void;
   currentMood: MoodType;
   onSelectMood: (m: MoodType) => void;
   gestureActive: boolean;
@@ -19,18 +41,15 @@ interface MenuSheetProps {
   onPhotoUpload: (file: File) => void;
   onExitPhoto: () => void;
   onReplay: () => void;
-  onOpenAsk: () => void;
   onVoiceTest: () => void;
   deepMode: boolean;
   onToggleDeep: () => void;
   onOpenYouTube: () => void;
-  onOpenReel: () => void;
   onOpenTradingBot?: () => void;
-  onOpenAgentCompany?: () => void;
   onOpenElevenLabs?: () => void;
   onSpeakCustomText?: (text: string) => void;
   onSendCommand?: (text: string) => void;
-  initialTab?: 'apps' | 'phone' | 'voice' | 'moods' | 'settings';
+  initialTab?: 'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings';
   langMode: string;
   onToggleLang: () => void;
   themes: ThemeConfig[];
@@ -40,6 +59,10 @@ interface MenuSheetProps {
   onToggleBg: () => void;
   sfxOn: boolean;
   onToggleSfx: () => void;
+  sfxVolume: number;
+  onChangeSfxVolume: (val: number) => void;
+  voiceVolume: number;
+  onChangeVoiceVolume: (val: number) => void;
   soundOn: boolean;
   onToggleSound: () => void;
   onClose: () => void;
@@ -47,6 +70,16 @@ interface MenuSheetProps {
 
 export const MenuSheet: React.FC<MenuSheetProps> = ({
   isOpen,
+  currentUser,
+  onSwitchUser,
+  onLogout,
+  memories = [],
+  onAddMemory,
+  onDeleteMemory,
+  tasks = [],
+  onAddTask,
+  onToggleTask,
+  onDeleteTask,
   currentMood,
   onSelectMood,
   gestureActive,
@@ -58,18 +91,12 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
   characters,
   currentCharIdx,
   onCycleCharacter,
-  photoMode,
-  onPhotoUpload,
-  onExitPhoto,
   onReplay,
-  onOpenAsk,
   onVoiceTest,
   deepMode,
   onToggleDeep,
   onOpenYouTube,
-  onOpenReel,
   onOpenTradingBot,
-  onOpenAgentCompany,
   onOpenElevenLabs,
   onSpeakCustomText,
   onSendCommand,
@@ -83,94 +110,158 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
   onToggleBg,
   sfxOn,
   onToggleSfx,
+  sfxVolume,
+  onChangeSfxVolume,
+  voiceVolume,
+  onChangeVoiceVolume,
   soundOn,
   onToggleSound,
   onClose,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<'apps' | 'phone' | 'voice' | 'moods' | 'settings'>(initialTab || 'apps');
-  const [ttsInput, setTtsInput] = useState('Namaste Boss! Main APEX bol raha hoon, sab systems online hain.');
+  const [activeTab, setActiveTab] = useState<
+    'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings'
+  >(initialTab || 'apps');
+  const [memDraft, setMemDraft] = useState('');
+  const [taskDraft, setTaskDraft] = useState('');
+  const [membersList, setMembersList] = useState<ApexMemberProfile[]>(() => loadMembers());
+  const [memberName, setMemberName] = useState('');
+  const [memberIdInput, setMemberIdInput] = useState('');
+  const [memberPin, setMemberPin] = useState('');
+  const [memberMsg, setMemberMsg] = useState<string | null>(null);
+  const [requireLogin, setRequireLogin] = useState<boolean>(() => isLoginGateRequired());
+  const [ownerIdDraft, setOwnerIdDraft] = useState<string>(() => loadMembers()[0]?.identifier || 'admin');
+  const [ownerPinDraft, setOwnerPinDraft] = useState<string>(() => loadMembers()[0]?.pin || '1234');
+  const [ttsInput, setTtsInput] = useState(
+    'Namaste Boss! Main APEX bol raha hoon, sab systems online hain.'
+  );
   const [sttText, setSttText] = useState('');
   const [sttListening, setSttListening] = useState(false);
+  const [voiceEngineStatus, setVoiceEngineStatus] = useState<string>(
+    '✅ Built-in Hindi/Hinglish HD Assistant Voice ACTIVE'
+  );
   const sttRef = useRef<any>(null);
+  const sttStreamRef = useRef<MediaStream | null>(null);
+  const sttFlushRef = useRef<((force?: boolean) => void) | null>(null);
 
   useEffect(() => {
     if (initialTab) setActiveTab(initialTab);
   }, [initialTab, isOpen]);
 
-  const toggleMenuStt = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  useEffect(() => {
+    if (!isOpen) return;
+    const localCfg = loadElevenConfig();
+    if (localCfg.apiKey) {
+      setVoiceEngineStatus('✅ ElevenLabs Direct HD Studio Voice ACTIVE');
+      return;
+    }
+    fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/tts-check')
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.elevenlabsWorking) {
+          setVoiceEngineStatus('✅ Cloud ElevenLabs HD Voice ACTIVE');
+        } else {
+          setVoiceEngineStatus('✅ Built-in Cloud Hindi/Hinglish HD Voice ACTIVE (Zero Extra Key Needed)');
+        }
+      })
+      .catch(() => {});
+  }, [isOpen]);
+
+  const toggleMenuStt = async () => {
     if (sttListening) {
-      try { sttRef.current?.stop(); } catch {}
+      try {
+        sttRef.current?.stop();
+      } catch {}
+      sttFlushRef.current?.(true);
+      sttFlushRef.current = null;
+      if (sttStreamRef.current) {
+        try {
+          sttStreamRef.current.getTracks().forEach((t) => t.stop());
+        } catch {}
+        sttStreamRef.current = null;
+      }
+      audio.disconnectMicStream();
       setSttListening(false);
       return;
     }
-    if (!SR) return;
-    try {
-      const rec = new SR();
-      rec.lang = 'hi-IN';
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.onstart = () => setSttListening(true);
-      rec.onresult = (ev: any) => {
-        let out = '';
-        for (let i = 0; i < ev.results.length; i++) out += ev.results[i][0].transcript + ' ';
-        setSttText(out.trim());
-      };
-      rec.onerror = () => setSttListening(false);
-      rec.onend = () => setSttListening(false);
-      sttRef.current = rec;
-      rec.start();
-    } catch {}
+
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SR && !(window as any).ApexAndroid) {
+      try {
+        const rec = new SR();
+        rec.lang = 'hi-IN';
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.onstart = () => setSttListening(true);
+        rec.onresult = (ev: any) => {
+          let out = '';
+          for (let i = 0; i < ev.results.length; i++) out += ev.results[i][0].transcript + ' ';
+          setSttText(out.trim());
+        };
+        rec.onerror = () => setSttListening(false);
+        rec.onend = () => setSttListening(false);
+        sttRef.current = rec;
+        rec.start();
+        return;
+      } catch {}
+    }
+
+    if (navigator.mediaDevices?.getUserMedia) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
+        sttStreamRef.current = stream;
+        setSttListening(true);
+        const flush = await audio.startLivePcmCapture(stream, {
+          isMutedGate: () => false,
+          onLevel: () => {},
+          onUtteranceWav: async (wavBuf) => {
+            try {
+              const r = await fetch('https://apex-humanoid-v2.pradhanbibek53.workers.dev/stt', {
+                method: 'POST',
+                headers: { 'content-type': 'audio/wav' },
+                body: wavBuf,
+              });
+              const j = await r.json();
+              if (j?.text) {
+                setSttText((prev) => (prev ? `${prev} ${j.text}`.trim() : String(j.text).trim()));
+              }
+            } catch {}
+          },
+        });
+        sttFlushRef.current = flush;
+      } catch {
+        setSttListening(false);
+      }
+    }
   };
 
   if (!isOpen) return null;
 
   const currentCharacter = characters[currentCharIdx];
   const currentTheme = themes[currentThemeIdx];
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      onPhotoUpload(file);
-    }
-  };
-
-  const handleFaceClick = () => {
-    if (photoMode) {
-      onExitPhoto();
-    } else {
-      fileInputRef.current?.click();
-    }
-  };
+  const isOwnerUser = !currentUser || currentUser.role === 'owner';
 
   return (
-    <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(90px+env(safe-area-inset-bottom))] w-[min(540px,calc(100vw-28px))] z-30 flex flex-col rounded-2xl bg-[rgba(5,13,20,0.96)] border border-[rgba(79,210,255,0.24)] backdrop-blur-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.95)] overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-sans">
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={handleFileChange}
-      />
-
-      {/* Top Header & Tab Switcher (Decluttered, modern navigation) */}
-      <div className="flex items-center justify-between px-3.5 pt-3 pb-2.5 border-b border-[rgba(79,210,255,0.12)] bg-[rgba(4,10,16,0.6)]">
-        <div className="flex items-center gap-1 p-1 rounded-xl bg-[rgba(10,22,34,0.7)] border border-[rgba(79,210,255,0.12)] overflow-x-auto">
+    <div className="fixed left-1/2 -translate-x-1/2 bottom-[calc(84px+env(safe-area-inset-bottom))] w-[min(500px,calc(100vw-24px))] z-30 flex flex-col rounded-3xl bg-[rgba(7,14,24,0.94)] border border-white/14 backdrop-blur-2xl shadow-[0_24px_70px_rgba(0,0,0,0.95)] overflow-hidden font-sans">
+      {/* Clean Executive Navigation Header */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-white/10 bg-white/[0.02]">
+        <div className="flex items-center gap-1 overflow-x-auto">
           {[
-            { id: 'apps' as const, label: '🚀 Apps' },
+            { id: 'apps' as const, label: '✨ Studio' },
+            { id: 'memory' as const, label: '🧠 Memory' },
             { id: 'phone' as const, label: '📱 Phone' },
-            { id: 'voice' as const, label: '🎙️ STT/TTS' },
+            { id: 'voice' as const, label: '🎙️ Voice' },
             { id: 'moods' as const, label: '🎭 Moods' },
             { id: 'settings' as const, label: '⚙️ System' },
           ].map((t) => (
             <button
               key={t.id}
               onClick={() => setActiveTab(t.id)}
-              className={`cursor-pointer px-2.5 py-1.5 rounded-lg text-[10px] font-mono tracking-wider uppercase whitespace-nowrap transition-all duration-150 ${
+              className={`cursor-pointer px-3 py-1.5 rounded-full text-[11px] font-semibold whitespace-nowrap transition-all ${
                 activeTab === t.id
-                  ? 'bg-[var(--cyan,#4fd2ff)] text-[#06121c] font-bold shadow-[0_0_12px_rgba(79,210,255,0.5)]'
-                  : 'text-[#7da5bf] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.06)]'
+                  ? 'bg-gradient-to-r from-[#00f5d4] to-[#4fd2ff] text-[#04141f]'
+                  : 'text-[#8cb0c9] hover:text-white hover:bg-white/6'
               }`}
             >
               {t.label}
@@ -180,34 +271,430 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
 
         <button
           onClick={onClose}
-          className="cursor-pointer text-[#7da5bf] hover:text-[#ff6b6b] hover:bg-[rgba(255,107,107,0.1)] w-8 h-8 rounded-lg flex items-center justify-center text-sm transition-all border border-transparent hover:border-[rgba(255,107,107,0.3)]"
-          title="Close menu"
+          className="cursor-pointer text-[#8cb0c9] hover:text-white w-7 h-7 rounded-full hover:bg-white/10 flex items-center justify-center text-xs transition-all shrink-0 ml-1"
+          title="Close"
         >
           ✕
         </button>
       </div>
 
-      {/* Embedded Phone Control Drawer right inside APEX 3D Screen */}
+      {/* TAB: AI PERSONAL MEMORY & TASKS */}
+      {activeTab === 'memory' && (
+        <div className="p-3.5 flex flex-col gap-3 max-h-[58vh] overflow-y-auto">
+          <div className="p-3 rounded-2xl bg-[rgba(0,245,212,0.08)] border border-[rgba(0,245,212,0.28)] space-y-2">
+            <div className="text-xs font-bold text-[#7efce8]">
+              🧠 Personal AI Long-Term Memory ({memories.length})
+            </div>
+            <p className="text-[11px] text-[#9ec4dc]">
+              APEX aapki baatein apne-aap yaad rakhta hai — ya yahan se direct add karein:
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!memDraft.trim()) return;
+                onAddMemory?.(memDraft.trim());
+                setMemDraft('');
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <input
+                type="text"
+                value={memDraft}
+                onChange={(e) => setMemDraft(e.target.value)}
+                placeholder="e.g. Mera naam Rahul hai / Target Gold ₹1.40L"
+                className="flex-1 rounded-xl bg-black/40 border border-white/15 px-3 py-2 text-xs text-white placeholder-[#6889a3] focus:outline-none focus:border-[#00f5d4]"
+              />
+              <button
+                type="submit"
+                className="cursor-pointer px-3.5 py-2 rounded-xl bg-[#00f5d4] text-[#031a15] text-xs font-bold"
+              >
+                + Save
+              </button>
+            </form>
+
+            <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+              {memories.length === 0 ? (
+                <div className="text-[11px] text-[#6e8fa8] py-1">
+                  Abhi koi saved note nahi — bolkar &ldquo;Yaad rakhna...&rdquo; ya upar + Save se add karein.
+                </div>
+              ) : (
+                memories.map((m) => (
+                  <div
+                    key={m.id}
+                    className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/10 text-xs text-white"
+                  >
+                    <span className="truncate">{m.text}</span>
+                    <button
+                      onClick={() => onDeleteMemory?.(m.id)}
+                      className="cursor-pointer text-[#ff7b9c] hover:text-white text-xs px-1.5"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
+            <div className="text-xs font-bold text-white">✅ Personal Tasks &amp; Reminders ({tasks.length})</div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!taskDraft.trim()) return;
+                onAddTask?.(taskDraft.trim());
+                setTaskDraft('');
+              }}
+              className="flex items-center gap-1.5"
+            >
+              <input
+                type="text"
+                value={taskDraft}
+                onChange={(e) => setTaskDraft(e.target.value)}
+                placeholder="Naya task likhein..."
+                className="flex-1 rounded-xl bg-black/40 border border-white/15 px-3 py-2 text-xs text-white placeholder-[#6889a3] focus:outline-none focus:border-[#4fd2ff]"
+              />
+              <button
+                type="submit"
+                className="cursor-pointer px-3.5 py-2 rounded-xl bg-[#4fd2ff] text-[#03141f] text-xs font-bold"
+              >
+                + Add
+              </button>
+            </form>
+            <div className="space-y-1.5 max-h-32 overflow-y-auto">
+              {tasks.map((t) => (
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-white/[0.04] border border-white/10 text-xs"
+                >
+                  <button
+                    onClick={() => onToggleTask?.(t.id)}
+                    className={`cursor-pointer text-left truncate flex-1 ${
+                      t.done ? 'line-through text-[#6e8fa8]' : 'text-white'
+                    }`}
+                  >
+                    {t.done ? '☑ ' : '☐ '}
+                    {t.title}
+                  </button>
+                  <button
+                    onClick={() => onDeleteTask?.(t.id)}
+                    className="cursor-pointer text-[#ff7b9c] text-xs px-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: LOGIN GATE, PERSONAL PRIVACY & MEMBER MANAGEMENT */}
+      {activeTab === 'account' && (
+        <div className="p-3.5 flex flex-col gap-3 max-h-[58vh] overflow-y-auto">
+          {/* Active Session Banner */}
+          <div className="p-3 rounded-2xl bg-[rgba(79,210,255,0.1)] border border-[rgba(79,210,255,0.3)] flex items-center justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-[#7be0ff]">
+                Active Logged-In Profile
+              </div>
+              <div className="text-sm font-bold text-white">
+                {currentUser?.name || 'Admin'}{' '}
+                <span className="text-[10px] font-normal text-[#00f5d4]">
+                  ({isOwnerUser ? 'Personal Owner' : 'Isolated Member'})
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                onClose();
+                onLogout?.();
+              }}
+              className="cursor-pointer px-3 py-1.5 rounded-xl bg-[rgba(255,107,139,0.18)] border border-[rgba(255,107,139,0.45)] text-xs font-semibold text-[#ff9ebb] hover:text-white"
+            >
+              Sign Out / Login Page
+            </button>
+          </div>
+
+          {/* Owner Controls: Public Play Store Login Gate + Admin PIN + Add Members */}
+          {isOwnerUser && (
+            <>
+              <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-white">
+                      🔒 App Khulte Hi Login Page Maango (Public / Listing Mode)
+                    </div>
+                    <p className="text-[10.5px] text-[#8db2cc]">
+                      Abhi Personal Use ke liye OFF hai. Jab Play Store / doston ko dein tab ON kar dein — koi aapka CoinDCX account nahi dekh payega!
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      const next = !requireLogin;
+                      setRequireLogin(next);
+                      setLoginGateRequired(next);
+                    }}
+                    className={`cursor-pointer px-3.5 py-1.5 rounded-full text-[11px] font-bold shrink-0 ${
+                      requireLogin
+                        ? 'bg-[#00f5a0] text-[#031a12]'
+                        : 'bg-white/10 text-[#9ec0d8]'
+                    }`}
+                  >
+                    {requireLogin ? 'ON' : 'OFF'}
+                  </button>
+                </div>
+
+                {/* Owner Login ID & PIN Customizer */}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setMembersList(updateOwnerPin(ownerIdDraft, ownerPinDraft));
+                    setMemberMsg('✅ Owner Login ID & PIN saved!');
+                  }}
+                  className="grid grid-cols-3 gap-1.5 pt-1"
+                >
+                  <input
+                    type="text"
+                    value={ownerIdDraft}
+                    onChange={(e) => setOwnerIdDraft(e.target.value)}
+                    placeholder="Admin ID/Phone"
+                    className="rounded-xl bg-black/40 border border-white/15 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <input
+                    type="text"
+                    value={ownerPinDraft}
+                    onChange={(e) => setOwnerPinDraft(e.target.value)}
+                    placeholder="Admin PIN"
+                    className="rounded-xl bg-black/40 border border-white/15 px-2.5 py-1.5 text-xs text-white"
+                  />
+                  <button
+                    type="submit"
+                    className="cursor-pointer rounded-xl bg-white/12 hover:bg-white/20 text-xs font-semibold text-white py-1.5"
+                  >
+                    Save Admin PIN
+                  </button>
+                </form>
+              </div>
+
+              {/* Add & Manage Members Section */}
+              <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2.5">
+                <div className="text-xs font-bold text-white">
+                  👥 Add / Manage Members ({membersList.length})
+                </div>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const r = addMemberByOwner(memberName, memberIdInput, memberPin);
+                    if (!r.ok) {
+                      setMemberMsg(`⚠️ ${r.error}`);
+                      return;
+                    }
+                    setMembersList(r.list);
+                    setMemberName('');
+                    setMemberIdInput('');
+                    setMemberPin('');
+                    setMemberMsg('✅ Member added! Unka account 100% separate rahega.');
+                  }}
+                  className="grid grid-cols-1 sm:grid-cols-3 gap-1.5"
+                >
+                  <input
+                    type="text"
+                    value={memberName}
+                    onChange={(e) => setMemberName(e.target.value)}
+                    placeholder="Member Name"
+                    className="rounded-xl bg-black/40 border border-white/15 px-2.5 py-2 text-xs text-white placeholder-[#6889a3]"
+                  />
+                  <input
+                    type="text"
+                    value={memberIdInput}
+                    onChange={(e) => setMemberIdInput(e.target.value)}
+                    placeholder="Phone / Email / ID"
+                    className="rounded-xl bg-black/40 border border-white/15 px-2.5 py-2 text-xs text-white placeholder-[#6889a3]"
+                  />
+                  <div className="flex gap-1.5">
+                    <input
+                      type="text"
+                      value={memberPin}
+                      onChange={(e) => setMemberPin(e.target.value)}
+                      placeholder="PIN (1234)"
+                      className="w-24 rounded-xl bg-black/40 border border-white/15 px-2.5 py-2 text-xs text-white placeholder-[#6889a3]"
+                    />
+                    <button
+                      type="submit"
+                      className="cursor-pointer flex-1 rounded-xl bg-[#00f5d4] text-[#031a15] text-xs font-bold px-3"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </form>
+
+                {memberMsg && <div className="text-[11px] text-[#7efce8]">{memberMsg}</div>}
+
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pt-1">
+                  {membersList.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-white/[0.05] border border-white/10 text-xs"
+                    >
+                      <div className="min-w-0">
+                        <div className="font-semibold text-white truncate">
+                          {m.name}{' '}
+                          <span className="text-[10px] text-[#7ea4be]">({m.identifier})</span>
+                        </div>
+                        <div className="text-[10px] text-[#6d92ac]">
+                          {m.role === 'owner'
+                            ? 'Owner · Personal Wallet Linked'
+                            : `Member · Isolated Personal Account · PIN: ${m.pin}`}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {currentUser?.id !== m.id && (
+                          <button
+                            onClick={() => {
+                              onSwitchUser?.(m);
+                              onClose();
+                            }}
+                            className="cursor-pointer px-2.5 py-1 rounded-lg bg-[#4fd2ff]/20 text-[#8ce2ff] text-[10.5px] font-semibold"
+                          >
+                            Switch
+                          </button>
+                        )}
+                        {m.role !== 'owner' && (
+                          <button
+                            onClick={() => setMembersList(removeMemberByOwner(m.id))}
+                            className="cursor-pointer px-2 py-1 rounded-lg bg-white/8 text-[#ff8aa6] text-[10.5px]"
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 1: CLEAN CORE STUDIOS (All extra filler removed!) */}
+      {activeTab === 'apps' && (
+        <div className="p-3.5 flex flex-col gap-2.5 max-h-[55vh] overflow-y-auto">
+          {!(window as any).ApexAndroid && (
+            <a
+              href="./APEX-Humanoid.apk"
+              download="APEX-Humanoid-v3.9.apk"
+              className="group cursor-pointer flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-[rgba(0,245,212,0.2)] to-[rgba(79,210,255,0.1)] border border-[#00f5d4]/50 hover:border-[#00f5d4] transition-all text-left no-underline"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#00f5d4]/20 border border-[#00f5d4]/45 flex items-center justify-center text-lg">
+                  📲
+                </div>
+                <div>
+                  <div className="text-[13px] font-bold text-[#00f5d4]">
+                    Download Android App (APEX v4.0 Vision Hologram APK)
+                  </div>
+                  <p className="text-[11px] text-[#cbfaf0]">
+                    1-Click Direct Download · AI 21-Landmark Hand Hologram + Voice Control
+                  </p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-[#00f5d4] text-[#031915] text-[10.5px] font-bold">
+                Download ↓
+              </span>
+            </a>
+          )}
+
+          {onOpenTradingBot && (
+            <button
+              onClick={onOpenTradingBot}
+              className="group cursor-pointer flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-[rgba(0,245,160,0.12)] to-white/[0.03] border border-[rgba(0,245,160,0.3)] hover:border-[#00f5a0] transition-all text-left"
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[rgba(0,245,160,0.16)] border border-[rgba(0,245,160,0.35)] flex items-center justify-center text-lg">
+                  📈
+                </div>
+                <div>
+                  <div className="text-[13px] font-semibold text-white">
+                    AI Day Trader &amp; Real CoinDCX
+                  </div>
+                  <p className="text-[11px] text-[#8dc7b2]">
+                    NIFTY 50 · BANKNIFTY · 990 Crypto · 11-Skill Analysis
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-[#00f5a0]">→</span>
+            </button>
+          )}
+
+          <button
+            onClick={onOpenYouTube}
+            className="group cursor-pointer flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-[rgba(79,210,255,0.12)] to-white/[0.03] border border-[rgba(79,210,255,0.28)] hover:border-[#4fd2ff] transition-all text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[rgba(79,210,255,0.16)] border border-[rgba(79,210,255,0.35)] flex items-center justify-center text-lg">
+                🎬
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-white">
+                  YouTube Autonomous Studio
+                </div>
+                <p className="text-[11px] text-[#92bed9]">
+                  Viral Shorts AI Script · Voiceover · Video Render
+                </p>
+              </div>
+            </div>
+            <span className="text-xs text-[#4fd2ff]">→</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('voice')}
+            className="group cursor-pointer flex items-center justify-between p-3.5 rounded-2xl bg-gradient-to-r from-[rgba(155,124,255,0.14)] to-white/[0.03] border border-[rgba(155,124,255,0.3)] hover:border-[#b39aff] transition-all text-left"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[rgba(155,124,255,0.18)] border border-[rgba(155,124,255,0.35)] flex items-center justify-center text-lg">
+                🎙️
+              </div>
+              <div>
+                <div className="text-[13px] font-semibold text-white">
+                  Speech-to-Text &amp; Voice Studio
+                </div>
+                <p className="text-[11px] text-[#c4b5fd]">
+                  Live Hindi/English Dictation · Custom TTS · ElevenLabs Voices
+                </p>
+              </div>
+            </div>
+            <span className="text-xs text-[#c4b5fd]">→</span>
+          </button>
+        </div>
+      )}
+
+      {/* TAB 2: DIRECT ANDROID PHONE CONTROL */}
       {activeTab === 'phone' && (
         <div className="p-3.5 space-y-2.5 max-h-[55vh] overflow-y-auto">
-          <div className="text-[11px] font-mono text-[#7fd8ff]">
-            📱 Direct Android App, Alarm &amp; System Control (Speak or Tap):
+          <div className="rounded-xl bg-[rgba(0,245,212,0.08)] border border-[rgba(0,245,212,0.28)] px-3 py-2 text-[11px] text-[#dffef6]">
+            ⚡ <b>Voice Direct Control Ready:</b> Seedha boliye — <i>"Open YouTube"</i>, <i>"YouTube par Arijit Singh chalao"</i>, <i>"Torch on karo"</i>, <i>"Volume badhao"</i>, <i>"Open WhatsApp / Camera / Maps"</i>!
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
+              { label: '▶️ YouTube', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
               { label: '💬 WhatsApp', run: () => executePhoneAction('LAUNCH_APP', { app: 'whatsapp' }) },
               { label: '📸 Instagram', run: () => executePhoneAction('LAUNCH_APP', { app: 'instagram' }) },
-              { label: '▶️ YouTube', run: () => executePhoneAction('LAUNCH_APP', { app: 'youtube' }) },
-              { label: '⏰ 7:00 AM Alarm', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'APEX Alarm' }) },
-              { label: '⏲️ 5m Timer', run: () => executePhoneAction('SET_TIMER', { seconds: 300, text: 'APEX Timer' }) },
-              { label: '✈️ Telegram', run: () => executePhoneAction('LAUNCH_APP', { app: 'telegram' }) },
+              { label: '📷 Camera', run: () => executePhoneAction('OPEN_CAMERA') },
+              { label: '🔦 Torch ON', run: () => executePhoneAction('SET_TORCH', { torchOn: true }) },
+              { label: '🌑 Torch OFF', run: () => executePhoneAction('SET_TORCH', { torchOn: false }) },
+              { label: '🔊 Volume +', run: () => executePhoneAction('ADJUST_VOLUME', { volumeMode: 'up' }) },
+              { label: '🔉 Volume −', run: () => executePhoneAction('ADJUST_VOLUME', { volumeMode: 'down' }) },
               { label: '🗺️ Maps', run: () => executePhoneAction('LAUNCH_APP', { app: 'maps' }) },
-              { label: '⚙️ Wi-Fi Settings', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
+              { label: '🌐 Chrome', run: () => executePhoneAction('LAUNCH_APP', { app: 'chrome' }) },
+              { label: '⏰ 7:00 AM Alarm', run: () => executePhoneAction('SET_ALARM', { hour: 7, minute: 0, text: 'APEX Alarm' }) },
+              { label: '📶 Wi-Fi Settings', run: () => executePhoneAction('OPEN_SETTINGS', { app: 'wifi' }) },
             ].map((item) => (
               <button
                 key={item.label}
                 onClick={item.run}
-                className="cursor-pointer p-2.5 rounded-xl bg-[rgba(10,24,38,0.85)] hover:bg-[rgba(79,210,255,0.16)] border border-[rgba(79,210,255,0.24)] text-xs font-semibold text-[#e6f6ff] text-center transition-all"
+                className="cursor-pointer p-3 rounded-2xl bg-white/5 hover:bg-white/12 border border-white/10 text-xs font-medium text-white text-center transition-all"
               >
                 {item.label}
               </button>
@@ -216,27 +703,31 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
         </div>
       )}
 
-      {/* Embedded Live Speech-to-Text (STT) & Text-to-Speech (TTS) Drawer right inside APEX 3D Screen */}
+      {/* TAB 3: LIVE STT / TTS & OPTIONAL ELEVENLABS STUDIO */}
       {activeTab === 'voice' && (
         <div className="p-3.5 space-y-3 max-h-[55vh] overflow-y-auto">
-          <div className="p-3 rounded-xl bg-[rgba(10,24,38,0.85)] border border-[rgba(79,210,255,0.22)] space-y-2">
+          <div className="px-3 py-2 rounded-xl bg-[rgba(0,245,160,0.09)] border border-[rgba(0,245,160,0.28)] text-[11px] text-[#b8ffe4]">
+            {voiceEngineStatus}
+          </div>
+
+          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#e6f6ff]">🎤 Live Speech-to-Text (STT)</span>
+              <span className="text-xs font-semibold text-white">🎤 Live Speech-to-Text (STT)</span>
               <button
                 onClick={toggleMenuStt}
-                className={`cursor-pointer px-3 py-1 rounded-lg text-[10.5px] font-bold ${
+                className={`cursor-pointer px-3 py-1 rounded-full text-[10.5px] font-bold ${
                   sttListening ? 'bg-[#ff4f70] text-white' : 'bg-[#00f5a0] text-[#041a12]'
                 }`}
               >
-                {sttListening ? '⏹ Stop Mic' : '🎤 Start Live STT'}
+                {sttListening ? '⏹ Stop' : '🎤 Start Dictation'}
               </button>
             </div>
             <textarea
               rows={2}
               value={sttText}
               onChange={(e) => setSttText(e.target.value)}
-              placeholder="Boliye — aapki aawaz live text me yahan aayegi..."
-              className="w-full rounded-lg bg-[#05101a] border border-[rgba(79,210,255,0.2)] p-2 text-xs text-white outline-none resize-none"
+              placeholder="Boliye — aapki aawaz live text me yahan aayegi…"
+              className="w-full rounded-xl bg-black/40 border border-white/12 p-2.5 text-xs text-white outline-none resize-none"
             />
             {sttText && onSendCommand && (
               <button
@@ -244,31 +735,34 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
                   onSendCommand(sttText);
                   onClose();
                 }}
-                className="cursor-pointer px-3 py-1.5 rounded-lg bg-[#4fd2ff] text-[#041a12] text-xs font-bold"
+                className="cursor-pointer px-3.5 py-1.5 rounded-full bg-[#4fd2ff] text-[#041a12] text-xs font-bold"
               >
-                ➤ Ask APEX This
+                Ask APEX →
               </button>
             )}
           </div>
 
-          <div className="p-3 rounded-xl bg-[rgba(10,24,38,0.85)] border border-[rgba(79,210,255,0.22)] space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-[#e6f6ff]">🔊 Text-to-Speech (APEX 3D Voice)</span>
+          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-white">🔊 Text-to-Speech (TTS)</span>
               <div className="flex gap-1.5">
                 {onOpenElevenLabs && (
                   <button
                     onClick={onOpenElevenLabs}
-                    className="cursor-pointer px-2.5 py-1 rounded-lg bg-[rgba(168,85,247,0.25)] border border-[#c084fc] text-[#f3e8ff] text-[10px] font-bold"
+                    className="cursor-pointer px-2.5 py-1 rounded-full bg-[rgba(168,85,247,0.22)] border border-[#c084fc]/50 text-[#f3e8ff] text-[10.5px] font-semibold"
                   >
-                    🎙️ ElevenLabs Key/Voices
+                    Custom Voices
                   </button>
                 )}
                 {onSpeakCustomText && (
                   <button
-                    onClick={() => onSpeakCustomText(ttsInput)}
-                    className="cursor-pointer px-3 py-1 rounded-lg bg-[#4fd2ff] text-[#041a12] text-[10.5px] font-bold"
+                    onClick={() => {
+                      audio.unlockSpeaker();
+                      onSpeakCustomText(ttsInput);
+                    }}
+                    className="cursor-pointer px-3 py-1 rounded-full bg-[#4fd2ff] text-[#041a12] text-[10.5px] font-bold"
                   >
-                    🔊 Speak Now
+                    🔊 Speak
                   </button>
                 )}
               </div>
@@ -277,415 +771,222 @@ export const MenuSheet: React.FC<MenuSheetProps> = ({
               rows={2}
               value={ttsInput}
               onChange={(e) => setTtsInput(e.target.value)}
-              placeholder="Jo likhenge APEX turant lip-sync ke saath bolega..."
-              className="w-full rounded-lg bg-[#05101a] border border-[rgba(79,210,255,0.2)] p-2 text-xs text-white outline-none resize-none"
+              className="w-full rounded-xl bg-black/40 border border-white/12 p-2.5 text-xs text-white outline-none resize-none"
             />
           </div>
         </div>
       )}
 
-      {/* Tab 1: Studio Apps & Autotrading */}
-      {activeTab === 'apps' && (
-        <div className="p-3 sm:p-3.5 flex flex-col gap-2 max-h-[55vh] overflow-y-auto">
-          {onOpenElevenLabs && (
-            <button
-              onClick={onOpenElevenLabs}
-              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(168,85,247,0.2)] to-[rgba(6,18,28,0.75)] border border-[rgba(192,132,252,0.5)] hover:border-[#d8b4fe] transition-all text-left shadow-[0_0_16px_rgba(168,85,247,0.18)]"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[rgba(168,85,247,0.22)] border border-[rgba(192,132,252,0.5)] flex items-center justify-center text-lg">
-                  🎙️
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[13px] text-[#f3e8ff] tracking-wide">
-                      ElevenLabs HD Voice Studio
-                    </span>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(168,85,247,0.3)] text-[#e9d5ff] font-bold tracking-wider">
-                      HINDI + ENGLISH HD
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#d8b4fe] leading-snug">
-                    Paste API Key (sk_...) + Pick George, Brian, Aria, Sarah or Custom Voice ID
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs text-[#e9d5ff] group-hover:translate-x-1 transition-transform">
-                →
-              </span>
-            </button>
-          )}
-          {onOpenTradingBot && (
-            <button
-              onClick={onOpenTradingBot}
-              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(0,245,160,0.12)] to-[rgba(6,18,28,0.7)] border border-[rgba(0,245,160,0.35)] hover:border-[rgba(0,245,160,0.7)] hover:bg-[rgba(0,245,160,0.18)] transition-all text-left shadow-[0_0_14px_rgba(0,245,160,0.1)]"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[rgba(0,245,160,0.16)] border border-[rgba(0,245,160,0.4)] flex items-center justify-center text-lg">
-                  📈
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[13px] text-[#e0fff3] tracking-wide">
-                      CoinDCX Real Money Trading
-                    </span>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(0,245,160,0.25)] text-[#00f5a0] font-bold tracking-wider">
-                      LIVE MONEY
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#78c7ab] leading-snug">
-                    100% Real CoinDCX Spot + Futures Balance &amp; Live BUY/SELL Execution
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs text-[#00f5a0] group-hover:translate-x-1 transition-transform">
-                →
-              </span>
-            </button>
-          )}
-
-          {onOpenAgentCompany && (
-            <button
-              onClick={onOpenAgentCompany}
-              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(255,100,34,0.12)] to-[rgba(6,18,28,0.7)] border border-[rgba(255,100,34,0.35)] hover:border-[rgba(255,100,34,0.7)] hover:bg-[rgba(255,100,34,0.18)] transition-all text-left shadow-[0_0_14px_rgba(255,100,34,0.1)]"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[rgba(255,100,34,0.16)] border border-[rgba(255,100,34,0.4)] flex items-center justify-center text-lg">
-                  🏢
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[13px] text-[#fff0e6] tracking-wide">
-                      Chief of Staff & Agents
-                    </span>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(255,100,34,0.25)] text-[#ff803b] font-bold tracking-wider">
-                      COMMAND CENTER
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#cca590] leading-snug">
-                    Autonomous multi-agent corporate execution & task dispatch
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs text-[#ff803b] group-hover:translate-x-1 transition-transform">
-                →
-              </span>
-            </button>
-          )}
-
-          {!window.location.search.includes('app=apk') && (
-            <a
-              href="https://aidavil112.github.io/apex-humanoid-v2/APEX-Humanoid.apk"
-              download="APEX-Humanoid.apk"
-              className="group cursor-pointer flex items-center justify-between p-3 rounded-xl bg-gradient-to-r from-[rgba(79,210,255,0.16)] to-[rgba(0,245,160,0.1)] border border-[rgba(79,210,255,0.45)] hover:border-[#00f5a0] transition-all text-left no-underline"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-lg bg-[rgba(79,210,255,0.2)] border border-[#4fd2ff] flex items-center justify-center text-lg">
-                  📲
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-[13px] text-white tracking-wide">
-                      Download Android App (APK)
-                    </span>
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[rgba(0,245,160,0.25)] text-[#00f5a0] font-bold">
-                      v2.0 APK
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#9ecbe3] leading-snug">
-                    1-Tap Install Fullscreen App · Live Voice + CoinDCX + YouTube
-                  </p>
-                </div>
-              </div>
-              <span className="text-xs text-[#00f5a0] font-bold">⬇ APK</span>
-            </a>
-          )}
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={onOpenReel}
-              className="cursor-pointer flex flex-col p-2.5 rounded-xl bg-[rgba(225,48,108,0.1)] border border-[rgba(225,48,108,0.28)] hover:border-[rgba(225,48,108,0.6)] hover:bg-[rgba(225,48,108,0.16)] transition-all text-left"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-base">📸</span>
-                <span className="text-[9px] font-mono text-[#ff80ab]">REEL</span>
-              </div>
-              <span className="text-[12px] font-semibold text-[#ffe0ec]">IG Reel Studio</span>
-              <span className="text-[10px] text-[#cfa5b7] line-clamp-1">Visual reel player & audio sync</span>
-            </button>
-
-            <button
-              onClick={onOpenYouTube}
-              className="cursor-pointer flex flex-col p-2.5 rounded-xl bg-[rgba(46,168,201,0.1)] border border-[rgba(46,168,201,0.28)] hover:border-[rgba(46,168,201,0.6)] hover:bg-[rgba(46,168,201,0.16)] transition-all text-left"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-base">🎬</span>
-                <span className="text-[9px] font-mono text-[#7fd4ff]">STREAM</span>
-              </div>
-              <span className="text-[12px] font-semibold text-[#dcf4ff]">YouTube Studio</span>
-              <span className="text-[10px] text-[#91bfd4] line-clamp-1">Video stream & live feed</span>
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={onOpenAsk}
-              className="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl bg-[rgba(79,210,255,0.06)] border border-[rgba(79,210,255,0.16)] hover:border-[rgba(79,210,255,0.4)] hover:bg-[rgba(79,210,255,0.12)] transition-all text-left"
-            >
-              <span className="text-base">⌨️</span>
-              <div>
-                <div className="text-[11.5px] font-semibold text-[#bfe6ff]">Terminal Ask</div>
-                <div className="text-[9.5px] text-[#719ab2]">Direct query terminal</div>
-              </div>
-            </button>
-
-            <button
-              onClick={onVoiceTest}
-              className="cursor-pointer flex items-center gap-2.5 p-2.5 rounded-xl bg-[rgba(79,210,255,0.06)] border border-[rgba(79,210,255,0.16)] hover:border-[rgba(79,210,255,0.4)] hover:bg-[rgba(79,210,255,0.12)] transition-all text-left"
-            >
-              <span className="text-base">🔊</span>
-              <div>
-                <div className="text-[11.5px] font-semibold text-[#bfe6ff]">Voice Diagnostic</div>
-                <div className="text-[9.5px] text-[#719ab2]">Test speech output</div>
-              </div>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 2: Moods & Emotional Sentiment */}
+      {/* TAB 4: MOODS */}
       {activeTab === 'moods' && (
-        <div className="p-3.5 flex flex-col gap-3 max-h-[55vh] overflow-y-auto">
-          {/* Core Behavioral State */}
-          <div>
-            <div className="text-[9.5px] font-mono tracking-widest text-[#5c88a4] uppercase mb-1.5 flex items-center gap-1.5">
-              <span>●</span> SYSTEM BEHAVIORAL STATE
-            </div>
-            <div className="grid grid-cols-4 gap-1.5">
-              {(['idle', 'listening', 'thinking', 'speaking'] as MoodType[]).map((m) => (
-                <button
-                  key={m}
-                  onClick={() => onSelectMood(m)}
-                  className={`cursor-pointer font-mono text-[10px] tracking-wider uppercase rounded-xl py-2 px-1 text-center transition-all duration-150 border ${
-                    currentMood === m
-                      ? 'text-[#06121c] bg-[var(--cyan,#4fd2ff)] border-[var(--cyan,#4fd2ff)] font-bold shadow-[0_0_12px_rgba(79,210,255,0.6)]'
-                      : 'text-[#7fa8c2] border-[rgba(79,210,255,0.12)] bg-[rgba(7,18,28,0.5)] hover:text-[#d7f1ff] hover:bg-[rgba(79,210,255,0.08)]'
-                  }`}
-                >
-                  {m}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Emotional Sentiments */}
-          <div>
-            <div className="text-[9.5px] font-mono tracking-widest text-[#5c88a4] uppercase mb-1.5 flex items-center gap-1.5">
-              <span>●</span> EMOTIONAL SENTIMENT DYNAMICS
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
-              {[
-                { mood: 'happy' as MoodType, label: '😊 Happy', color: '#ffd13b' },
-                { mood: 'excited' as MoodType, label: '⚡ Excited', color: '#ff7a18' },
-                { mood: 'calm' as MoodType, label: '🌿 Calm', color: '#29f0aa' },
-                { mood: 'surprised' as MoodType, label: '✨ Surprised', color: '#f04aff' },
-                { mood: 'angry' as MoodType, label: '🔥 Angry', color: '#ff3322' },
-                { mood: 'sad' as MoodType, label: '💧 Sad', color: '#5b82ff' },
-                { mood: 'neutral' as MoodType, label: '💠 Neutral', color: '#b0d6f5' },
-              ].map(({ mood, label, color }) => {
-                const isActive = currentMood === mood;
-                return (
-                  <button
-                    key={mood}
-                    onClick={() => onSelectMood(mood)}
-                    style={{
-                      borderColor: isActive ? color : 'rgba(79,210,255,0.12)',
-                      backgroundColor: isActive ? color : 'rgba(6,18,28,0.5)',
-                      color: isActive ? '#050c12' : '#8ab2cc',
-                      boxShadow: isActive ? `0 0 12px ${color}88` : 'none',
-                    }}
-                    className={`cursor-pointer text-[10.5px] tracking-wide font-medium rounded-xl py-2 px-2 text-center transition-all duration-150 border hover:scale-[1.02] ${
-                      isActive ? 'font-bold' : 'hover:text-[#ffffff]'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="text-[10px] text-[#557e99] leading-relaxed p-2.5 rounded-xl bg-[rgba(6,16,24,0.5)] border border-[rgba(79,210,255,0.08)]">
-            💡 Selecting an emotion dynamically modulates Apex heart rate (60–138 BPM), core particle dispersion, and auto-trader market conviction.
-          </div>
+        <div className="p-3.5 grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-[55vh] overflow-y-auto">
+          {[
+            { mood: 'idle' as MoodType, label: '✨ Calm Idle' },
+            { mood: 'happy' as MoodType, label: '😊 Happy' },
+            { mood: 'excited' as MoodType, label: '⚡ Excited' },
+            { mood: 'calm' as MoodType, label: '🌿 Zen' },
+            { mood: 'surprised' as MoodType, label: '🌟 Amazed' },
+            { mood: 'thinking' as MoodType, label: '🧠 Focus' },
+            { mood: 'sad' as MoodType, label: '💧 Soft' },
+            { mood: 'angry' as MoodType, label: '🔥 Intense' },
+          ].map(({ mood, label }) => {
+            const active = currentMood === mood;
+            return (
+              <button
+                key={mood}
+                onClick={() => onSelectMood(mood)}
+                className={`cursor-pointer py-2.5 px-2 rounded-2xl text-xs font-medium border transition-all ${
+                  active
+                    ? 'bg-[#4fd2ff] text-[#04141f] border-[#4fd2ff] font-bold'
+                    : 'bg-white/5 text-[#b5d4ea] border-white/10 hover:bg-white/12'
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
 
-      {/* Tab 3: System Settings & Avatar Controls */}
+      {/* TAB 5: DEDICATED SEPARATE AUDIO CONTROLS + AVATAR/SYSTEM SETTINGS */}
       {activeTab === 'settings' && (
         <div className="p-3.5 flex flex-col gap-3 max-h-[55vh] overflow-y-auto">
-          {/* Avatar & Aesthetics */}
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={onCycleCharacter}
-              className="cursor-pointer flex items-center justify-between p-2.5 rounded-xl bg-[rgba(79,210,255,0.06)] border border-[rgba(79,210,255,0.16)] hover:border-[rgba(79,210,255,0.4)] text-left transition-all"
-            >
-              <div>
-                <div className="text-[9px] font-mono text-[#527d96] uppercase">AVATAR MESH</div>
-                <div className="text-[12px] font-semibold text-[#bfe6ff]">
-                  ◈ {currentCharacter?.name || 'Nova'}
+          {/* 1. DEDICATED SEPARATE VOICE VOLUME VS BACKGROUND FX SOUND CONTROL */}
+          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/12 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-white">🗣️ Assistant Voice Volume</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] font-mono text-[#4fd2ff]">
+                  {Math.round(voiceVolume * 100)}%
+                </span>
+                <button
+                  onClick={onVoiceTest}
+                  className="cursor-pointer px-2.5 py-0.5 rounded-full bg-white/10 hover:bg-white/20 text-[10px] text-white"
+                >
+                  Test
+                </button>
+              </div>
+            </div>
+            <input
+              type="range"
+              min="0.1"
+              max="1"
+              step="0.05"
+              value={voiceVolume}
+              onChange={(e) => onChangeVoiceVolume(parseFloat(e.target.value))}
+              className="w-full accent-[#00f5d4] cursor-pointer h-1.5 rounded-lg"
+            />
+
+            <div className="pt-2 border-t border-white/10 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-semibold text-white">🔉 Background FX Sound</div>
+                  <div className="text-[10px] text-[#7fa4bd]">
+                    UI effects &amp; ambient hum (alag se ON/OFF)
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={onToggleSfx}
+                    className={`cursor-pointer px-2.5 py-1 rounded-full text-[10.5px] font-bold border transition-all ${
+                      sfxOn
+                        ? 'bg-[#4fd2ff] text-[#04141f] border-[#4fd2ff]'
+                        : 'bg-white/6 text-[#89a8bf] border-white/12'
+                    }`}
+                  >
+                    {sfxOn ? 'FX ON' : 'FX OFF'}
+                  </button>
+                  <button
+                    onClick={onToggleSound}
+                    className={`cursor-pointer px-2.5 py-1 rounded-full text-[10.5px] font-bold border transition-all ${
+                      soundOn
+                        ? 'bg-[#00f5d4] text-[#04141f] border-[#00f5d4]'
+                        : 'bg-white/6 text-[#89a8bf] border-white/12'
+                    }`}
+                  >
+                    {soundOn ? 'Hum ON' : 'Hum OFF'}
+                  </button>
                 </div>
               </div>
-              <span className="text-xs text-[#527d96]">↻</span>
+
+              {sfxOn && (
+                <div className="flex items-center gap-2.5">
+                  <span className="text-[10px] text-[#8ab0c9] shrink-0">FX Level</span>
+                  <input
+                    type="range"
+                    min="0.05"
+                    max="0.6"
+                    step="0.05"
+                    value={sfxVolume}
+                    onChange={(e) => onChangeSfxVolume(parseFloat(e.target.value))}
+                    className="flex-1 accent-[#4fd2ff] cursor-pointer h-1.5 rounded-lg"
+                  />
+                  <span className="text-[10.5px] font-mono text-[#bfe6ff] w-9 text-right">
+                    {Math.round(sfxVolume * 100)}%
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* 2. AVATAR, THEME & LANGUAGE */}
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              onClick={onCycleCharacter}
+              className="cursor-pointer p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left"
+            >
+              <div className="text-[9px] text-[#7ea4be] uppercase">Avatar</div>
+              <div className="text-xs font-semibold text-white truncate">
+                {currentCharacter?.name || 'Nova'}
+              </div>
             </button>
 
             <button
               onClick={onCycleTheme}
-              className="cursor-pointer flex items-center justify-between p-2.5 rounded-xl bg-[rgba(79,210,255,0.06)] border border-[rgba(79,210,255,0.16)] hover:border-[rgba(79,210,255,0.4)] text-left transition-all"
+              className="cursor-pointer p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left"
             >
-              <div>
-                <div className="text-[9px] font-mono text-[#527d96] uppercase">THEME COLOR</div>
-                <div className="text-[12px] font-semibold text-[#bfe6ff] capitalize">
-                  ◐ {currentTheme.name}
-                </div>
+              <div className="text-[9px] text-[#7ea4be] uppercase">Theme</div>
+              <div className="text-xs font-semibold text-white capitalize truncate">
+                {currentTheme.name}
               </div>
-              <span className="text-xs text-[#527d96]">↻</span>
             </button>
-          </div>
 
-          {/* Language & Deep Reasoning & Custom Face */}
-          <div className="grid grid-cols-3 gap-2">
             <button
               onClick={onToggleLang}
-              className="cursor-pointer p-2.5 rounded-xl bg-[rgba(79,210,255,0.06)] border border-[rgba(79,210,255,0.16)] hover:border-[rgba(79,210,255,0.4)] text-center transition-all"
+              className="cursor-pointer p-2.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-left"
             >
-              <div className="text-[9px] font-mono text-[#527d96] uppercase">LANGUAGE</div>
-              <div className="text-[11.5px] font-semibold text-[#bfe6ff]">
-                {langMode === 'hi-IN' ? 'अ Hindi' : 'A English'}
-              </div>
-            </button>
-
-            <button
-              onClick={onToggleDeep}
-              className={`cursor-pointer p-2.5 rounded-xl border transition-all text-center ${
-                deepMode
-                  ? 'bg-[rgba(79,210,255,0.16)] border-[rgba(79,210,255,0.5)] text-[#bfe6ff]'
-                  : 'bg-[rgba(79,210,255,0.06)] border-[rgba(79,210,255,0.16)] text-[#729bb2]'
-              }`}
-            >
-              <div className="text-[9px] font-mono text-[#527d96] uppercase">MODEL</div>
-              <div className="text-[11.5px] font-semibold">
-                {deepMode ? '🧠 Deep Think' : '⚡ Fast Flash'}
-              </div>
-            </button>
-
-            <button
-              onClick={handleFaceClick}
-              className={`cursor-pointer p-2.5 rounded-xl border transition-all text-center ${
-                photoMode
-                  ? 'bg-[rgba(79,210,255,0.16)] border-[rgba(79,210,255,0.5)] text-[#bfe6ff]'
-                  : 'bg-[rgba(79,210,255,0.06)] border-[rgba(79,210,255,0.16)] text-[#729bb2]'
-              }`}
-            >
-              <div className="text-[9px] font-mono text-[#527d96] uppercase">PHOTO FACE</div>
-              <div className="text-[11.5px] font-semibold">
-                {photoMode ? '◉ Active Face' : '+ Upload'}
+              <div className="text-[9px] text-[#7ea4be] uppercase">Language</div>
+              <div className="text-xs font-semibold text-white">
+                {langMode === 'hi-IN' ? 'Hindi / Hinglish' : 'English'}
               </div>
             </button>
           </div>
 
-          {/* Hand Tracking Toggle & Sliders */}
-          <div className="p-3 rounded-xl bg-[rgba(6,16,24,0.6)] border border-[rgba(79,210,255,0.14)] flex flex-col gap-2.5">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-sm">✋</span>
-                <span className="text-[11.5px] font-semibold text-[#bfe6ff]">
-                  Hand Gesture Gaze Control
-                </span>
-              </div>
-              <button
-                onClick={onToggleGesture}
-                className={`cursor-pointer px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold transition-all border ${
-                  gestureActive
-                    ? 'bg-[rgba(0,245,160,0.2)] text-[#00f5a0] border-[rgba(0,245,160,0.4)]'
-                    : 'bg-[rgba(79,210,255,0.06)] text-[#658ea4] border-[rgba(79,210,255,0.1)]'
-                }`}
-              >
-                {gestureActive ? 'ACTIVE 🟢' : 'DISABLED'}
-              </button>
-            </div>
-
-            {gestureActive && (
-              <div className="flex flex-col gap-2 pt-1 border-t border-[rgba(79,210,255,0.08)]">
-                <div className="flex items-center justify-between text-[10px] text-[#6d96b0]">
-                  <span>Movement Smoothing:</span>
-                  <span className="text-[#bfe6ff] font-mono">{gestureSmoothing.toFixed(2)}</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.05"
-                  max="0.55"
-                  step="0.01"
-                  value={gestureSmoothing}
-                  onChange={(e) => onChangeGestureSmoothing(parseFloat(e.target.value))}
-                  className="accent-[#4fd2ff] cursor-pointer h-1.5 bg-[#0a1e2b] rounded-lg"
-                />
-
-                <div className="flex items-center justify-between text-[10px] text-[#6d96b0]">
-                  <span>Gaze Sensitivity:</span>
-                  <span className="text-[#bfe6ff] font-mono">{gestureSensitivity.toFixed(1)}x</span>
-                </div>
-                <input
-                  type="range"
-                  min="0.5"
-                  max="3.5"
-                  step="0.1"
-                  value={gestureSensitivity}
-                  onChange={(e) => onChangeGestureSensitivity(parseFloat(e.target.value))}
-                  className="accent-[#4fd2ff] cursor-pointer h-1.5 bg-[#0a1e2b] rounded-lg"
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Audio & Grid Switches */}
-          <div className="grid grid-cols-4 gap-1.5 pt-1 border-t border-[rgba(79,210,255,0.08)]">
+          {/* 3. EXTRA VISUAL CONTROLS (Flat 2D photo face removed — pure 3D Humanoids only!) */}
+          <div className="grid grid-cols-3 gap-1.5">
             <button
               onClick={onToggleBg}
-              className={`cursor-pointer font-mono text-[9.5px] uppercase py-1.5 rounded-lg border transition-all ${
-                bgOn
-                  ? 'bg-[rgba(79,210,255,0.15)] text-[#bfe6ff] border-[rgba(79,210,255,0.35)]'
-                  : 'text-[#4c728a] border-[rgba(79,210,255,0.08)]'
-              }`}
+              className="cursor-pointer py-2 rounded-xl bg-white/5 border border-white/10 text-[10.5px] text-[#c5e2f7]"
             >
-              ◧ Grid {bgOn ? 'On' : 'Off'}
+              Grid: {bgOn ? 'On' : 'Off'}
             </button>
             <button
-              onClick={onToggleSfx}
-              className={`cursor-pointer font-mono text-[9.5px] uppercase py-1.5 rounded-lg border transition-all ${
-                sfxOn
-                  ? 'bg-[rgba(79,210,255,0.15)] text-[#bfe6ff] border-[rgba(79,210,255,0.35)]'
-                  : 'text-[#4c728a] border-[rgba(79,210,255,0.08)]'
-              }`}
+              onClick={onToggleDeep}
+              className="cursor-pointer py-2 rounded-xl bg-white/5 border border-white/10 text-[10.5px] text-[#c5e2f7]"
             >
-              ♪ SFX {sfxOn ? 'On' : 'Off'}
-            </button>
-            <button
-              onClick={onToggleSound}
-              className={`cursor-pointer font-mono text-[9.5px] uppercase py-1.5 rounded-lg border transition-all ${
-                soundOn
-                  ? 'bg-[rgba(79,210,255,0.15)] text-[#bfe6ff] border-[rgba(79,210,255,0.35)]'
-                  : 'text-[#4c728a] border-[rgba(79,210,255,0.08)]'
-              }`}
-            >
-              🔊 Drone {soundOn ? 'On' : 'Off'}
+              {deepMode ? 'Deep AI' : 'Fast AI'}
             </button>
             <button
               onClick={onReplay}
-              className="cursor-pointer font-mono text-[9.5px] uppercase py-1.5 rounded-lg border border-[rgba(79,210,255,0.1)] text-[#6591ab] hover:text-[#bfe6ff] hover:bg-[rgba(79,210,255,0.06)] transition-all"
+              className="cursor-pointer py-2 rounded-xl bg-white/5 border border-white/10 text-[10.5px] text-[#c5e2f7]"
             >
-              ↺ Replay
+              Replay 3D
             </button>
+          </div>
+
+          {/* 4. INVISIBLE HAND GESTURE CONTROL (Selfie camera feed stays 100% hidden!) */}
+          <div className="p-3 rounded-2xl bg-white/[0.04] border border-white/10 flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium text-white">✋ Hand Gesture Control (Hidden Sensor)</span>
+              <button
+                onClick={onToggleGesture}
+                className={`cursor-pointer px-3 py-1 rounded-full text-[10.5px] font-bold border ${
+                  gestureActive
+                    ? 'bg-[#00f5a0] text-[#04141f] border-[#00f5a0]'
+                    : 'bg-white/6 text-[#8cb0c9] border-white/12'
+                }`}
+              >
+                {gestureActive ? 'ON' : 'OFF'}
+              </button>
+            </div>
+            {gestureActive && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <div className="text-[10px] text-[#8ab0c9]">Smoothing ({gestureSmoothing.toFixed(2)})</div>
+                  <input
+                    type="range"
+                    min="0.05"
+                    max="0.55"
+                    step="0.01"
+                    value={gestureSmoothing}
+                    onChange={(e) => onChangeGestureSmoothing(parseFloat(e.target.value))}
+                    className="w-full accent-[#4fd2ff] h-1.5"
+                  />
+                </div>
+                <div>
+                  <div className="text-[10px] text-[#8ab0c9]">Sensitivity ({gestureSensitivity.toFixed(1)}x)</div>
+                  <input
+                    type="range"
+                    min="0.5"
+                    max="3.5"
+                    step="0.1"
+                    value={gestureSensitivity}
+                    onChange={(e) => onChangeGestureSensitivity(parseFloat(e.target.value))}
+                    className="w-full accent-[#4fd2ff] h-1.5"
+                  />
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

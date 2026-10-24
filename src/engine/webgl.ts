@@ -25,65 +25,53 @@ const smoothstep = (a: number, b: number, x: number) => {
   const t = clamp((x - a) / (b - a || 1), 0, 1);
   return t * t * (3 - 2 * t);
 };
+const mixVal = (a: number, b: number, t: number) => a + (b - a) * t;
 
 export const CHARACTERS: CharacterConfig[] = [
   {
     id: 'nova',
-    name: 'Nova',
-    head: { cx: 0, cy: 1.205, cz: 0.015, rx: 0.25, ry: 0.318, rz: 0.272 },
-    jaw: 0.42,
+    name: 'APEX Prime',
+    head: { cx: 0, cy: 1.205, cz: 0.015, rx: 0.235, ry: 0.305, rz: 0.268 },
+    jaw: 0.44,
     brow: 1.0,
-    hair: { n: 26000, r: 1.055, lift: 0.045, style: 'bob' },
-    shoulders: 1.0,
-    waist: 1.0,
-    eyes: { y: 0.02, x: 0.083, r: 0.03, glow: 1.0 },
+    hair: { n: 26000, r: 1.06, lift: 0.055, style: 'bob' },
+    shoulders: 1.06,
+    waist: 0.94,
+    eyes: { y: 0.025, x: 0.082, r: 0.026, glow: 1.2 },
+    rings: 2,
+    armor: 1,
+  },
+  {
+    id: 'astra',
+    name: 'ARIA 3D',
+    head: { cx: 0, cy: 1.212, cz: 0.015, rx: 0.222, ry: 0.298, rz: 0.258 },
+    jaw: 0.52,
+    brow: 1.15,
+    hair: { n: 34000, r: 1.08, lift: 0.075, style: 'long' },
+    shoulders: 0.90,
+    waist: 0.80,
+    eyes: { y: 0.022, x: 0.078, r: 0.027, glow: 1.35 },
     rings: 2,
     armor: 0,
   },
   {
-    id: 'astra',
-    name: 'Astra',
-    head: { cx: 0, cy: 1.215, cz: 0.015, rx: 0.238, ry: 0.31, rz: 0.262 },
-    jaw: 0.5,
-    brow: 1.15,
-    hair: { n: 34000, r: 1.075, lift: 0.075, style: 'long' },
-    shoulders: 0.92,
-    waist: 0.86,
-    eyes: { y: 0.015, x: 0.078, r: 0.028, glow: 1.3 },
-    rings: 3,
-    armor: 0,
-  },
-  {
     id: 'unit7',
-    name: 'Unit 7',
-    head: { cx: 0, cy: 1.205, cz: 0.015, rx: 0.262, ry: 0.3, rz: 0.268 },
-    jaw: 0.22,
-    brow: 0.7,
-    hair: null,
+    name: 'ATLAS 3D',
+    head: { cx: 0, cy: 1.205, cz: 0.015, rx: 0.248, ry: 0.296, rz: 0.266 },
+    jaw: 0.28,
+    brow: 0.85,
+    hair: { n: 18000, r: 1.045, lift: 0.035, style: 'bob' },
     shoulders: 1.18,
-    waist: 1.1,
-    eyes: { y: 0.02, x: 0.09, r: 0.034, glow: 1.6 },
+    waist: 1.02,
+    eyes: { y: 0.024, x: 0.086, r: 0.028, glow: 1.5 },
     rings: 2,
     armor: 1,
   },
 ];
 
-export const PORTRAIT_AVATARS: CharacterConfig[] = [
-  {
-    id: 'ninja',
-    name: 'KAZE',
-    src: 'data:image/jpeg;base64,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',
-    view: { step: 1, scale: 0.92, y: 0.34, gain: 0.9, cutBg: true, bgTol: 12, bgLum: 0.46 },
-  },
-  {
-    id: 'hustler',
-    name: 'VEGA',
-    src: 'data:image/jpeg;base64,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',
-    view: { step: 1, scale: 0.92, y: 0.34, gain: 0.9, cutBg: true, bgTol: 12, bgLum: 0.46 },
-  },
-];
+export const PORTRAIT_AVATARS: CharacterConfig[] = [];
 
-export const ALL_AVATARS: CharacterConfig[] = [...CHARACTERS, ...PORTRAIT_AVATARS];
+export const ALL_AVATARS: CharacterConfig[] = [...CHARACTERS];
 
 export const THEMES = [
   { id: 'cyan', name: 'cyan', accent: [0.24, 0.74, 1.0] as [number, number, number], core: [1.0, 0.52, 0.1] as [number, number, number] },
@@ -327,7 +315,7 @@ export class WebGLEngine {
     layout(location=6) in float aSize;
 
     uniform mat4 uViewProj;
-    uniform float uTime, uYaw, uPitch, uCoreAmt, uAssemble, uFocal, uDpr, uDensity, uHeartPulse;
+    uniform float uTime, uYaw, uPitch, uCoreAmt, uAssemble, uFocal, uDpr, uDensity, uHeartPulse, uTalk;
     uniform vec3 uCoreCol;
     uniform vec3 uAccent;
     out vec3 vCol;
@@ -344,10 +332,36 @@ export class WebGLEngine {
       vec3 p = aPos;
       vec3 n = aNrm;
 
-      p *= 1.0 + 0.007*sin(t*1.15 + p.y*1.6);
+      // Natural living chest breathing + subtle organic human motion
+      float breath = sin(t * 1.35);
+      if (p.y < 0.92 && p.y > 0.20) {
+        p.z += breath * 0.008 * smoothstep(0.20, 0.75, p.y);
+        p.y += breath * 0.004;
+      }
+
+      // Real-time lip-sync jaw & lower-lip opening when speaking!
+      float jawAmt = uTalk * (0.62 + 0.38 * sin(t * 17.5 + aSeed * 1.4));
+      if (aType > 6.5) {
+        p.y -= jawAmt * 0.030;
+        p.z -= jawAmt * 0.006;
+      } else if (p.y > 0.90 && p.y < 1.07 && p.z > 0.04) {
+        float jawMask = smoothstep(1.07, 0.94, p.y) * smoothstep(0.04, 0.16, p.z);
+        p.y -= jawAmt * 0.022 * jawMask;
+      }
+
+      // Natural human periodic blinking every ~4.2 seconds
+      float bPhase = fract(t * 0.238 + 0.31);
+      float blink = smoothstep(0.955, 0.985, bPhase) * smoothstep(1.0, 0.985, bPhase);
+      if (aType > 3.5 && aType < 4.5 && abs(p.y - 1.228) < 0.045) {
+        p.y = mix(p.y, 1.224, blink * 0.88);
+      }
+
+      // Subtle living 3D idle head & body perspective sway so depth pops continuously
+      float liveYaw = uYaw + 0.095 * sin(t * 0.58) + 0.028 * sin(t * 1.31);
+      float livePitch = uPitch + 0.032 * sin(t * 0.79);
 
       float w = aWeight;
-      mat3 R = rotY(uYaw*w) * rotX(uPitch*w);
+      mat3 R = rotY(liveYaw * w) * rotX(livePitch * w);
       vec3 pivot = vec3(0.0, 0.95, 0.0);
       p = R*(p-pivot) + pivot;
       n = R*n;
@@ -357,62 +371,69 @@ export class WebGLEngine {
       p += n * (1.0-ease) * (0.55 + aSeed*0.9);
       float birthGlow = (1.0-ease) * 2.2;
 
-      float ring = 0.5 + 0.5*sin(aBand + t*0.28);
-      float thin = pow(ring, 26.0);
-      float fill = 0.19 + 0.34*smoothstep(-0.30, 0.95, n.z);
-      float rim  = pow(1.0 - abs(n.z), 3.4);
-      float br = fill + 0.90*thin + 0.95*rim;
-      br *= 0.86 + 0.20*sin(t*1.9 + aSeed*61.0);
-      vec3 cyan = uAccent;
-      vec3 col = cyan * br;
+      // Cinema-grade 3D directional studio key + warm contour + crisp rim shading (zero flat washout!)
+      vec3 keyDir = normalize(vec3(0.38, 0.45, 0.81));
+      float keyLight = max(0.0, dot(n, keyDir));
+      float ring = 0.5 + 0.5*sin(aBand + t*0.30);
+      float thin = pow(ring, 30.0);
+      float fill = 0.14 + 0.48 * keyLight;
+      float rim  = pow(1.0 - abs(n.z), 2.8);
+      float br = fill + 0.55*thin + 0.88*rim;
+      br *= 0.88 + 0.14*sin(t*1.9 + aSeed*61.0);
+      vec3 skinHolo = mix(uAccent, vec3(0.94, 0.88, 0.84), 0.34 * keyLight);
+      vec3 col = skinHolo * br;
 
-      float dc = length((p - vec3(0.0, 1.19, 0.05)) * vec3(1.0, 0.95, 0.55));
-      float glow = exp(-dc*dc*9.0) * uCoreAmt;
-      col += uCoreCol * glow * 0.26 * (1.0 + 0.50*uHeartPulse);
-
-      float warm = exp(-pow(p.x/0.19,2.0)) * exp(-pow((p.y-0.62)/0.46,2.0)) * smoothstep(-0.2,0.9,n.z);
-      col += uCoreCol * warm * (0.16 + 0.20*uCoreAmt) * (1.0 + 0.65*uHeartPulse);
+      // Subtle warm glow centered strictly at the CHEST cardiac core (y = 0.70), keeping the 3D human face razor-sharp!
+      float dc = length((p - vec3(0.0, 0.70, 0.06)) * vec3(1.1, 1.0, 0.7));
+      float glow = exp(-dc*dc*12.0) * uCoreAmt;
+      col += uCoreCol * glow * 0.34 * (1.0 + 0.65*uHeartPulse);
 
       float size = aSize;
 
-      if (aType > 5.5){
-        float rr = pow(1.0 - abs(n.z), 2.0);
-        col = mix(vec3(0.02,0.03,0.05), uAccent*0.55, rr) * (0.35 + 0.5*rr);
+      if (aType > 6.5){
+        // Expressive animated lower lip contour
+        col = mix(uAccent, vec3(1.0, 0.74, 0.72), 0.45) * 1.65;
+        size *= 1.35;
+      } else if (aType > 5.5){
+        // 3D Sculpted Human Hair strands
+        float sheen = pow(max(0.0, dot(n, normalize(vec3(-0.3, 0.75, 0.6)))), 3.0);
+        col = mix(vec3(0.03,0.05,0.09), uAccent*0.85, 0.30 + 0.70*sheen);
+        size *= 1.15;
       } else if (aType > 4.5){
-        float spin = fract(aSeed + t*0.045);
         float dash = pow(0.5 + 0.5*sin(aSeed*220.0 - t*4.0), 6.0);
-        col = uAccent * (0.35 + 1.6*dash) * (0.6 + 0.5*uCoreAmt);
-        size *= 1.4;
+        col = uAccent * (0.30 + 1.3*dash) * (0.55 + 0.45*uCoreAmt);
+        size *= 1.25;
       } else if (aType > 3.5){
-        col = uAccent * 2.2 * (0.75 + 0.25*sin(t*3.0 + aSeed*20.0));
-        size *= 1.7;
+        // Crisp 3D Eyes, Brows & Upper Lip
+        col = mix(uAccent, vec3(0.96, 0.98, 1.0), 0.42) * 1.9 * (0.85 + 0.15*sin(t*2.6 + aSeed*14.0));
+        size *= 1.5;
       } else if (aType > 2.5){
         float breathe = 0.7 + 0.3*sin(t*1.3 + aSeed*7.0);
         col = uCoreCol * 0.008 * breathe * (0.5 + uCoreAmt*0.6) * (1.0 + 0.75*uHeartPulse);
         size *= (1.0 + 0.30*uHeartPulse);
       } else if (aType > 0.5 && aType < 1.5){
-        // Core cluster particles pulsating in direct synchrony with virtual heart rate
-        float pulse = 0.5 + 0.5*sin(t*2.1 + aSeed*11.0);
-        float fall = 0.45 + 0.55*(1.0 - smoothstep(0.05, 0.20, length(p - vec3(0.0, 1.18, -0.02))));
-        col = uCoreCol * (0.10 + 0.30*pulse + 0.85*uHeartPulse) * (0.35 + 0.65*uCoreAmt) * fall;
-        size *= 1.55 * (1.0 + 0.70*uHeartPulse);
+        // Chest Heart Core pulsating cleanly at cardiac BPM inside sternum (y = 0.70)
+        float pulse = 0.5 + 0.5*sin(t*2.4 + aSeed*11.0);
+        float fall = 0.45 + 0.55*(1.0 - smoothstep(0.03, 0.15, length(p - vec3(0.0, 0.70, 0.04))));
+        col = uCoreCol * (0.14 + 0.28*pulse + 0.90*uHeartPulse) * (0.35 + 0.55*uCoreAmt) * fall;
+        size *= 1.45 * (1.0 + 0.65*uHeartPulse);
       } else if (aType > 1.5){
         float tw = pow(0.5+0.5*sin(t*1.4 + aSeed*90.0), 6.0);
-        col = cyan * (0.05 + 0.85*tw);
-      } else if (n.z < -0.08 && aType < 0.5) {
+        col = uAccent * (0.05 + 0.75*tw);
+      } else if (n.z < -0.14 && aType < 0.5) {
         gl_Position = vec4(2.0,2.0,2.0,1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vAlpha = 0.0; return;
       }
 
-      col += uCoreCol * birthGlow * 0.35;
+      col += uCoreCol * birthGlow * 0.30;
 
       vec4 mv = uViewProj * vec4(p, 1.0);
       gl_Position = mv;
       float dist = max(0.5, 3.1 - p.z*0.28);
-      float cap = (aType > 2.5) ? 220.0 : 26.0;
+      float cap = (aType > 2.5 && aType < 3.5) ? 180.0 : 22.0;
       gl_PointSize = clamp(size * uFocal / dist * uDpr, 1.0, cap);
 
       vCol = col;
-      vAlpha = aType > 0.5 ? 1.0 : (0.55 + 0.45*thin);
+      vAlpha = aType > 0.5 ? 0.95 : (0.48 + 0.42*thin);
     }`;
 
     const FS = `#version 300 es
@@ -453,6 +474,7 @@ export class WebGLEngine {
       'uCoreCol',
       'uAccent',
       'uHeartPulse',
+      'uTalk',
     ].forEach((k) => (this.U[k] = gl.getUniformLocation(prog, k)!));
   }
 
@@ -891,11 +913,14 @@ export class WebGLEngine {
       return y > keys[0][0] ? keys[0][1] : keys[keys.length - 1][1];
     };
 
-    const HEAD = cfg.head || { cx: 0, cy: 1.205, cz: 0.015, rx: 0.25, ry: 0.318, rz: 0.272 };
+    const HEAD = cfg.head || { cx: 0, cy: 1.205, cz: 0.015, rx: 0.235, ry: 0.305, rz: 0.268 };
     const RING = TAU / 0.031;
+    const TYPE_LIPS = 7;
+    const shoulderScale = cfg.shoulders || 1.0;
+    const waistScale = cfg.waist || 0.92;
 
-    // Anatomically Sculpted Humanoid Head Shell (Jawline, Nose, Orbit Cavities, Cheekbones, Lips)
-    const nShell = 180000;
+    // 1. Sculpted High-Precision 3D Human Head & Facial Anatomy (Zero White Washout!)
+    const nShell = 108000;
     for (let i = 0; i < nShell; i++) {
       const u = rnd() * 2 - 1,
         phi = rnd() * TAU;
@@ -906,52 +931,57 @@ export class WebGLEngine {
 
       const d = [gauss(), gauss(), gauss()];
       const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-      x = x * 0.94 + (d[0] / dl) * 0.06;
-      y = y * 0.94 + (d[1] / dl) * 0.06;
-      z = z * 0.94 + (d[2] / dl) * 0.06;
+      x = x * 0.965 + (d[0] / dl) * 0.035;
+      y = y * 0.965 + (d[1] / dl) * 0.035;
+      z = z * 0.965 + (d[2] / dl) * 0.035;
 
-      // 1. Jawline & Chin Taper
+      // Sculpted human jawline & chin projection
       if (y < 0) {
-        const jawTaper = 1.0 - 0.36 * Math.pow(Math.abs(y), 1.25);
+        const jawTaper = 1.0 - (0.40 - (cfg.jaw || 0.4) * 0.14) * Math.pow(Math.abs(y), 1.22);
         x *= jawTaper;
-        z *= 1.0 - 0.18 * Math.pow(Math.abs(y), 1.15);
+        z *= 1.0 - 0.16 * Math.pow(Math.abs(y), 1.15);
+        // Distinct human chin dimple/projection
+        if (z > 0 && y < -0.58) {
+          z += Math.exp(-32 * x * x) * Math.exp(-26 * Math.pow(y + 0.78, 2)) * 0.14;
+        }
       }
 
-      // 2. Nose Bridge & Tip Projection
+      // Defined human nose bridge, tip & nostrils
       if (z > 0) {
-        const noseY = y - 0.02;
-        const noseFactor = Math.exp(-70 * (x * x)) * Math.exp(-24 * (noseY * noseY));
-        z += noseFactor * 0.38;
+        const noseBridge = Math.exp(-95 * x * x) * Math.exp(-16 * Math.pow(y - 0.04, 2));
+        const noseTip = Math.exp(-120 * x * x) * Math.exp(-90 * Math.pow(y + 0.08, 2));
+        const nostrils =
+          Math.exp(-220 * Math.pow(Math.abs(x) - 0.085, 2)) *
+          Math.exp(-130 * Math.pow(y + 0.10, 2));
+        z += noseBridge * 0.28 + noseTip * 0.22 + nostrils * 0.09;
       }
 
-      // 3. Eye Sockets / Orbital Cavities
+      // Deep realistic orbital eye sockets & brow ridge
       if (z > 0) {
-        const eyeL = Math.hypot(x - 0.32, y - 0.08);
-        const eyeR = Math.hypot(x + 0.32, y - 0.08);
-        const socketIndent = Math.exp(-32 * eyeL * eyeL) + Math.exp(-32 * eyeR * eyeR);
-        z -= socketIndent * 0.18;
+        const eyeL = Math.hypot(x - 0.34, y - 0.085);
+        const eyeR = Math.hypot(x + 0.34, y - 0.085);
+        const socketIndent = Math.exp(-36 * eyeL * eyeL) + Math.exp(-36 * eyeR * eyeR);
+        z -= socketIndent * 0.20;
+        // Brow ridge above eyes
+        const browRidge =
+          Math.exp(-14 * x * x) * Math.exp(-85 * Math.pow(y - 0.23, 2)) * (cfg.brow || 1.0);
+        z += browRidge * 0.10;
       }
 
-      // 4. Cheekbones / Zygomatic Arch
+      // Sculpted human cheekbones & philtrum
       if (z > 0) {
-        const cheek = Math.exp(-28 * (Math.pow(Math.abs(x) - 0.48, 2) + Math.pow(y + 0.05, 2)));
-        x *= 1.0 + cheek * 0.14;
-        z += cheek * 0.12;
+        const cheek = Math.exp(-30 * (Math.pow(Math.abs(x) - 0.50, 2) + Math.pow(y + 0.04, 2)));
+        x *= 1.0 + cheek * 0.13;
+        z += cheek * 0.13;
       }
 
-      // 5. Lips & Mouth Contour
-      if (z > 0 && y < -0.10 && y > -0.32) {
-        const lipY = y + 0.20;
-        const lipFactor = Math.exp(-55 * (x * x)) * Math.exp(-65 * (lipY * lipY));
-        z += lipFactor * 0.14;
+      // Anatomical left & right human ears
+      const earDist = Math.hypot(z + 0.05, (y - 0.02) * 0.65);
+      if (Math.abs(x) > 0.88 && earDist < 0.24) {
+        x += Math.sign(x) * (1.0 - earDist / 0.24) * 0.11;
       }
 
-      // 6. Forehead Ridge
-      if (z > 0 && y > 0.22 && y < 0.70) {
-        z += Math.exp(-14 * (x * x)) * 0.06;
-      }
-
-      let px = x * HEAD.rx,
+      const px = x * HEAD.rx,
         py = y * HEAD.ry + HEAD.cy,
         pz = z * HEAD.rz + HEAD.cz;
       let nx = x / HEAD.rx,
@@ -962,49 +992,70 @@ export class WebGLEngine {
       ny /= nl;
       nz /= nl;
 
-      const band = (py - HEAD.cy) * RING;
-      push(px, py, pz, nx, ny, nz, band, TYPE_SHELL, 1.0, 0.0032);
+      push(px, py, pz, nx, ny, nz, (py - HEAD.cy) * RING, TYPE_SHELL, 1.0, 0.0024);
     }
 
-    // High-Detail Expressive Facial Features (Eyes, Pupils, Eyebrows, Lips)
-    const eyeOffsetX = cfg.eyes?.x || 0.083;
-    const eyeOffsetY = cfg.eyes?.y || 0.02;
+    // 2. Sculpted 3D Human Hair Strands (Zero Flat Helmet Look!)
+    if (cfg.hair) {
+      const hCount = cfg.hair.n;
+      const isLong = cfg.hair.style === 'long';
+      for (let i = 0; i < hCount; i++) {
+        const u = isLong ? rnd() * 1.65 - 0.55 : rnd() * 1.15 - 0.12;
+        const phi = rnd() * TAU;
+        const clampedU = Math.min(1, Math.max(-1, u));
+        const su = Math.sqrt(Math.max(0, 1 - clampedU * clampedU));
+        const cx = su * Math.cos(phi);
+        const cz = su * Math.sin(phi);
+        // Leave face front open from hairline down
+        if (cz > 0.22 && u < 0.42 && Math.abs(cx) < 0.72) continue;
+        const wave = 1.0 + 0.035 * Math.sin(phi * 11 + u * 8);
+        const radScale = cfg.hair.r * wave;
+        const px = cx * HEAD.rx * radScale;
+        const py = u * HEAD.ry * 1.02 + HEAD.cy + cfg.hair.lift * (u > 0 ? u : 0);
+        const pz = cz * HEAD.rz * radScale + HEAD.cz - 0.012;
+        push(px, py, pz, cx, Math.max(0.1, clampedU), cz, py * RING, TYPE_HAIR, 1.0, 0.0031);
+      }
+    }
+
+    // 3. Expressive Living Human Eyes (Sclera Outline + Iris Ring + Bright Corneal Catchlight)
+    const eyeOffsetX = cfg.eyes?.x || 0.082;
+    const eyeOffsetY = cfg.eyes?.y || 0.024;
     for (const side of [-1, 1]) {
       const ex = side * eyeOffsetX;
       const ey = HEAD.cy + eyeOffsetY;
-      const ez = HEAD.cz + HEAD.rz * 0.88;
+      const ez = HEAD.cz + HEAD.rz * 0.875;
 
-      // Iris & Pupil Ring
-      const nEye = 1800;
-      for (let k = 0; k < nEye; k++) {
+      // Almond eyelid contour
+      for (let k = 0; k < 520; k++) {
+        const t = (k / 520) * TAU;
+        const lidX = Math.cos(t) * 0.034;
+        const lidY = Math.sin(t) * 0.015;
+        push(ex + lidX, ey + lidY, ez - 0.004, 0, 0, 1, 0, TYPE_EYE, 1.0, 0.0034);
+      }
+
+      // Detailed Iris Ring + Corneal Highlight (leaves dark natural pupil center!)
+      for (let k = 0; k < 1300; k++) {
         const a = rnd() * TAU;
-        const r = 0.006 + rnd() * 0.022;
+        const r = 0.0075 + rnd() * 0.0125;
         push(
           ex + Math.cos(a) * r,
           ey + Math.sin(a) * r,
-          ez + (rnd() - 0.5) * 0.01,
+          ez + 0.004,
           0,
           0,
           1,
           0,
           TYPE_EYE,
           1.0,
-          0.0055
+          0.0042
         );
       }
-    }
-
-    // Eyebrow Contours
-    for (const side of [-1, 1]) {
-      for (let k = 0; k < 600; k++) {
-        const t = k / 600;
-        const bx = side * (0.025 + t * 0.11);
-        const by = HEAD.cy + 0.082 + Math.sin(t * Math.PI) * 0.018;
-        const bz = HEAD.cz + HEAD.rz * 0.86 + Math.cos(t * Math.PI) * 0.01;
+      // Crisp bright eye catchlight glint
+      for (let k = 0; k < 90; k++) {
         push(
-          bx + (rnd() - 0.5) * 0.008,
-          by + (rnd() - 0.5) * 0.006,
-          bz,
+          ex + 0.006 + (rnd() - 0.5) * 0.004,
+          ey + 0.006 + (rnd() - 0.5) * 0.004,
+          ez + 0.008,
           0,
           0,
           1,
@@ -1016,99 +1067,175 @@ export class WebGLEngine {
       }
     }
 
-    // Lips & Mouth Arc
-    for (let k = 0; k < 900; k++) {
-      const t = k / 900;
-      const lx = (t - 0.5) * 0.13;
-      const ly = HEAD.cy - 0.16 + Math.pow(lx, 2) * 0.4;
-      const lz = HEAD.cz + HEAD.rz * 0.85 + (1.0 - Math.pow(t - 0.5, 2) * 4) * 0.02;
+    // 4. Sculpted Human Eyebrows
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 650; k++) {
+        const t = k / 650;
+        const bx = side * (0.032 + t * 0.098);
+        const by = HEAD.cy + 0.078 + Math.sin(t * Math.PI * 0.85) * 0.017;
+        const bz = HEAD.cz + HEAD.rz * 0.885 - t * 0.022;
+        push(
+          bx + (rnd() - 0.5) * 0.006,
+          by + (rnd() - 0.5) * 0.005,
+          bz,
+          0,
+          0,
+          1,
+          0,
+          TYPE_EYE,
+          1.0,
+          0.0038
+        );
+      }
+    }
+
+    // 5. Realistic Upper Lip (Cupid's Bow) + Animated Lip-Sync Lower Lip (TYPE_LIPS = 7)
+    for (let k = 0; k < 700; k++) {
+      const t = k / 700;
+      const lx = (t - 0.5) * 0.108;
+      const cupid = -Math.abs(Math.abs(t - 0.5) - 0.14) * 0.018;
+      const ly = HEAD.cy - 0.132 + cupid;
+      const lz = HEAD.cz + HEAD.rz * 0.905 - Math.pow(lx * 5.2, 2) * 0.012;
+      push(lx, ly + (rnd() - 0.5) * 0.004, lz, 0, 0.2, 1, 0, TYPE_EYE, 1.0, 0.0036);
+    }
+    for (let k = 0; k < 750; k++) {
+      const t = k / 750;
+      const lx = (t - 0.5) * 0.102;
+      const ly = HEAD.cy - 0.146 + Math.pow(lx * 4.5, 2) * 0.014;
+      const lz = HEAD.cz + HEAD.rz * 0.902 - Math.pow(lx * 5.2, 2) * 0.012;
+      push(lx, ly + (rnd() - 0.5) * 0.005, lz, 0, -0.2, 1, 0, TYPE_LIPS, 1.0, 0.0039);
+    }
+
+    // 6. Anatomical 3D Human Neck, Clavicles, Chest, Ribcage & Waist (Full Upper Body!)
+    const nTorso = 76000;
+    for (let i = 0; i < nTorso; i++) {
+      const t = rnd(); // 0 = upper neck (y=0.95), 1 = sculpted waist (y=0.12)
+      const y = 0.95 - t * 0.83;
+      const a = rnd() * TAU;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+
+      // True human anatomical width & depth profile from neck -> traps -> chest -> waist
+      let halfW: number;
+      let halfD: number;
+      if (t < 0.16) {
+        // Cylindrical human neck with sternocleidomastoid taper
+        const nt = t / 0.16;
+        halfW = (0.082 + nt * 0.026) * shoulderScale;
+        halfD = 0.078 + nt * 0.018;
+      } else if (t < 0.30) {
+        // Trapezius & clavicle slope out to broad human shoulders
+        const st = smoothstep(0.16, 0.30, t);
+        halfW = (0.108 + st * 0.275) * shoulderScale;
+        halfD = 0.096 + st * 0.068;
+      } else {
+        // Sculpted human chest/pectorals tapering cleanly into athletic waist
+        const bt = (t - 0.30) / 0.70;
+        halfW = (0.383 * (1 - bt * 0.36) + 0.03 * Math.sin(bt * Math.PI)) * mixVal(shoulderScale, waistScale, bt);
+        halfD = 0.164 * (1 - bt * 0.26);
+      }
+
+      let x = ca * halfW;
+      let z = sa * halfD + HEAD.cz * 0.5;
+
+      // Sculpted pectoral muscles + sternum groove + collarbone ridge on front torso!
+      if (sa > 0 && t > 0.24 && t < 0.62) {
+        const pecY = Math.exp(-38 * Math.pow(t - 0.40, 2));
+        const pecX = Math.exp(-26 * Math.pow(Math.abs(x) - 0.145 * shoulderScale, 2));
+        z += pecY * pecX * 0.042;
+        // Center sternum channel
+        z -= pecY * Math.exp(-180 * x * x) * 0.018;
+      }
+      // Collarbone ridge
+      if (sa > 0.2 && Math.abs(t - 0.27) < 0.035 && Math.abs(x) > 0.04) {
+        z += 0.016 * Math.exp(-900 * Math.pow(t - 0.27, 2));
+      }
+
+      const nl = Math.hypot(x / halfW, 0.15, z / halfD) || 1;
+      const weight = t < 0.20 ? 0.85 : 0.42 * (1 - (t - 0.20) * 0.7);
       push(
-        lx + (rnd() - 0.5) * 0.006,
-        ly + (rnd() - 0.5) * 0.005,
-        lz,
-        0,
-        0,
-        1,
-        0,
-        TYPE_EYE,
-        1.0,
-        0.0042
+        x,
+        y,
+        z,
+        x / halfW / nl,
+        0.15 / nl,
+        z / halfD / nl,
+        y * RING,
+        TYPE_SHELL,
+        Math.max(0.12, weight),
+        0.0028
       );
     }
 
-    // Fiber-Optic Neural Neck, Shoulders & Chest Collar Structure (matching Instagram Reel)
-    const nTorso = 65000;
-    for (let i = 0; i < nTorso; i++) {
-      const t = rnd(); // 0 at chin base, 1 at lower shoulders
-      const y = HEAD.cy - HEAD.ry * 0.95 - t * 0.68;
-      const widthFactor = 0.11 + t * 0.36 + Math.pow(t, 2) * 0.26;
-      const angle = rnd() * TAU;
-      const r = widthFactor * (0.86 + rnd() * 0.18);
-      const x = Math.cos(angle) * r;
-      const z = Math.sin(angle) * r * 0.62 + HEAD.cz;
+    // 7. Left & Right Sculpted 3D Human Arms (Deltoids, Biceps, Elbows & Forearms!)
+    const nArms = 28000;
+    for (let i = 0; i < nArms; i++) {
+      const side = i % 2 === 0 ? 1 : -1;
+      const t = rnd(); // 0 = shoulder cap (y=0.73), 1 = forearm/wrist (y=0.10)
+      const a = rnd() * TAU;
+      // Natural human arm pose: hangs slightly outward & bends slightly forward below elbow
+      const shoulderX = side * 0.395 * shoulderScale;
+      const elbowBend = Math.max(0, t - 0.48) * 1.15;
+      const cx = shoulderX + side * Math.sin(t * 1.2) * 0.038;
+      const cy = 0.735 - t * 0.63;
+      const cz = HEAD.cz * 0.4 - Math.sin(t * Math.PI) * 0.02 + elbowBend * 0.11;
 
-      const nx = x / (r || 1);
-      const ny = -0.28;
-      const nz = (z - HEAD.cz) / (r || 1);
-      const band = y * RING;
-      push(x, y, z, nx, ny, nz, band, TYPE_SHELL, 0.85 + (1 - t) * 0.15, 0.0034);
+      // Deltoid bulge -> bicep -> forearm taper
+      const armRad =
+        t < 0.25
+          ? 0.088 - t * 0.055
+          : t < 0.55
+          ? 0.074 - (t - 0.25) * 0.035
+          : 0.063 - (t - 0.55) * 0.038;
+
+      const lx = Math.cos(a) * armRad;
+      const lz = Math.sin(a) * armRad * 0.92;
+      push(
+        cx + lx,
+        cy,
+        cz + lz,
+        Math.cos(a),
+        0.08,
+        Math.sin(a),
+        cy * RING,
+        TYPE_SHELL,
+        0.25,
+        0.0027
+      );
     }
 
-    // Core
-    for (let i = 0; i < 48000; i++) {
+    // 8. Cardiac Energy Heart Core Positioned Inside Human Chest Sternum (y = 0.70 — keeps Face 100% Clear!)
+    for (let i = 0; i < 16000; i++) {
       const d = [gauss(), gauss(), gauss()];
       const dl = Math.hypot(d[0], d[1], d[2]) || 1;
-      const r = Math.pow(rnd(), 0.65) * 0.16;
+      const r = Math.pow(rnd(), 0.62) * 0.095;
       push(
-        HEAD.cx + (d[0] / dl) * r * 0.9,
-        HEAD.cy + (d[1] / dl) * r * 0.9,
-        HEAD.cz + (d[2] / dl) * r * 0.7,
+        (d[0] / dl) * r,
+        0.70 + (d[1] / dl) * r,
+        0.05 + (d[2] / dl) * r * 0.65,
         0,
         0,
         1,
         0,
         TYPE_CORE,
-        0.9,
-        0.0042
+        0.38,
+        0.0038
       );
     }
 
-    // Orbit Rings
+    // 9. Subtle Floating Neural Halo Arc Behind Shoulders/Head
     const rings = cfg.rings || 2;
     for (let r = 0; r < rings; r++) {
-      const n = 4200;
-      const tilt = 0.95 + r * 0.26;
-      const rad = 0.395 + r * 0.062;
+      const n = 2600;
+      const tilt = 1.05 + r * 0.24;
+      const rad = 0.44 + r * 0.07;
       const st = Math.sin(tilt),
         ct = Math.cos(tilt);
       for (let i = 0; i < n; i++) {
         const a = rnd() * TAU;
         const px = Math.cos(a) * rad,
           pz = Math.sin(a) * rad;
-        push(px, HEAD.cy + pz * st, HEAD.cz + pz * ct, px / rad, 0, (pz * ct) / rad, 0, TYPE_RING, 1.0, 0.0026);
-      }
-    }
-
-    // Eyes
-    if (cfg.eyes) {
-      const ey = cfg.eyes;
-      for (const s of [-1, 1]) {
-        for (let i = 0; i < 1800; i++) {
-          const a = rnd() * TAU;
-          const rad = Math.sqrt(rnd()) * ey.r;
-          push(
-            s * ey.x + Math.cos(a) * rad,
-            HEAD.cy + ey.y + Math.sin(a) * rad,
-            HEAD.cz + HEAD.rz * 0.88,
-            0,
-            0,
-            1,
-            0,
-            TYPE_EYE,
-            1.0,
-            0.0038
-          );
-        }
+        push(px, HEAD.cy + pz * st, HEAD.cz - 0.08 + pz * ct, px / rad, 0, (pz * ct) / rad, 0, TYPE_RING, 0.75, 0.0022);
       }
     }
 
@@ -1462,11 +1589,11 @@ export class WebGLEngine {
     }
 
     const isMobile = this.canvas.width < this.canvas.height;
-    const proj = this.perspective((50 * Math.PI) / 180, this.canvas.width / this.canvas.height, 0.1, 40);
-    // Lowered humanoid head position so it floats cleanly in upper-mid canvas without colliding with top header
+    const proj = this.perspective((46 * Math.PI) / 180, this.canvas.width / this.canvas.height, 0.1, 40);
+    // Cleanly frames full upper-body 3D Humanoid (head, face, neck, shoulders, chest core & arms)
     const view = isMobile
-      ? this.lookAt([0, 0.70, 3.32], [0, 0.64, 0], [0, 1, 0])
-      : this.lookAt([0, 0.50, 2.92], [0, 0.52, 0], [0, 1, 0]);
+      ? this.lookAt([0, 0.84, 2.52], [0, 0.80, 0], [0, 1, 0])
+      : this.lookAt([0, 0.82, 2.24], [0, 0.80, 0], [0, 1, 0]);
     const vp = this.mul(proj, view);
 
     const gl = this.gl;
@@ -1487,26 +1614,23 @@ export class WebGLEngine {
       gl.useProgram(this.prog);
     }
 
-    if (this.photoMode && this.PHOTO?.ready) {
-      this.ORB.draw(vp, t, pointDpr, this.accentCur, clamp(amt, 0, 1));
-      this.PHOTO.draw(vp, t, pointDpr, this.density);
-    } else {
-      this.ORB.draw(vp, t, pointDpr, this.accentCur, clamp(amt, 0, 1));
+    const talkAmt = this.mood === 'speaking' ? Math.max(0.28, this.voiceEnv) : 0.0;
+    this.ORB.draw(vp, t, pointDpr, this.accentCur, clamp(amt * 0.65, 0, 0.85));
 
-      gl.uniformMatrix4fv(this.U.uViewProj, false, vp);
-      gl.uniform1f(this.U.uTime, t);
-      gl.uniform1f(this.U.uYaw, this.yaw);
-      gl.uniform1f(this.U.uPitch, this.pitch);
-      gl.uniform1f(this.U.uCoreAmt, amt);
-      gl.uniform1f(this.U.uHeartPulse, this.heartPulse);
-      gl.uniform1f(this.U.uAssemble, this.assemble);
-      gl.uniform1f(this.U.uDpr, pointDpr);
-      gl.uniform1f(this.U.uDensity, this.density);
-      gl.uniform1f(this.U.uFocal, (this.canvas.height * 0.5) / Math.tan((25 * Math.PI) / 180));
-      gl.uniform3fv(this.U.uCoreCol, this.cur);
-      gl.uniform3fv(this.U.uAccent, this.accentCur);
-      gl.drawArrays(gl.POINTS, 0, this.count);
-    }
+    gl.uniformMatrix4fv(this.U.uViewProj, false, vp);
+    gl.uniform1f(this.U.uTime, t);
+    gl.uniform1f(this.U.uYaw, this.yaw);
+    gl.uniform1f(this.U.uPitch, this.pitch);
+    gl.uniform1f(this.U.uCoreAmt, amt);
+    gl.uniform1f(this.U.uHeartPulse, this.heartPulse);
+    gl.uniform1f(this.U.uTalk, talkAmt);
+    gl.uniform1f(this.U.uAssemble, this.assemble);
+    gl.uniform1f(this.U.uDpr, pointDpr);
+    gl.uniform1f(this.U.uDensity, this.density);
+    gl.uniform1f(this.U.uFocal, (this.canvas.height * 0.5) / Math.tan((25 * Math.PI) / 180));
+    gl.uniform3fv(this.U.uCoreCol, this.cur);
+    gl.uniform3fv(this.U.uAccent, this.accentCur);
+    gl.drawArrays(gl.POINTS, 0, this.count);
 
     this.drawHud(now, this.accentCur, dt);
 

@@ -14,7 +14,10 @@ const TG = (token) => `https://api.telegram.org/bot${token}`;
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET, POST, OPTIONS',
-  'access-control-allow-headers': 'content-type, x-voice-history, x-wallet-context',
+  'access-control-allow-headers':
+    'content-type, x-voice-history, x-wallet-context, x-elevenlabs-voice, x-elevenlabs-key, x-skip-tts, x-stt-text, authorization',
+  'access-control-expose-headers': 'x-tts-provider',
+  'access-control-max-age': '86400',
 };
 
 const jsonRes = (obj, status = 200) =>
@@ -84,7 +87,14 @@ async function sendVoiceNote(token, chatId, audioBytes, caption = '') {
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 function base64ToUint8(b64) {
-  const clean = String(b64).replace(/^data:[^;]+;base64,/, '').replace(/\s+/g, '');
+  let clean = String(b64 || '')
+    .replace(/^data:.*;base64,/i, '')
+    .replace(/-/g, '+')
+    .replace(/_/g, '/')
+    .replace(/[^A-Za-z0-9+/=]/g, '');
+  const pad = clean.length % 4;
+  if (pad === 2) clean += '==';
+  else if (pad === 3) clean += '=';
   const bin = atob(clean);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
@@ -101,17 +111,21 @@ function cleanSecretValue(v) {
     .trim();
 }
 
+let unpermittedElevenKeyCache = '';
+
 async function synthesizeSpeechBytes(env, text, customVoiceId, clientElKey) {
   const cleanText = String(text || '').trim().slice(0, 800);
   if (!cleanText) throw new Error('text required');
 
-  // 1) ElevenLabs HD Multilingual / Flash v2.5 Voice (supports client header key OR env secret)
+  // 1) ElevenLabs HD Multilingual / Flash v2.5 Voice (supports client key OR env secret; skips cached 401 key in 0ms!)
   const elKey = cleanSecretValue(clientElKey || env.ELEVENLABS_API_KEY || '');
-  if (elKey) {
+  if (elKey && elKey !== unpermittedElevenKeyCache) {
     const primaryVoice = cleanSecretValue(customVoiceId || env.ELEVENLABS_VOICE_ID || 'JBFqnCBsd6RMkjVDRZzb');
     const voicesToTry = primaryVoice === 'JBFqnCBsd6RMkjVDRZzb' ? [primaryVoice] : [primaryVoice, 'JBFqnCBsd6RMkjVDRZzb'];
     const modelsToTry = ['eleven_flash_v2_5', 'eleven_multilingual_v2'];
+    let hitAuthBlock = false;
     for (const vId of voicesToTry) {
+      if (hitAuthBlock) break;
       for (const mId of modelsToTry) {
         try {
           const r = await fetch(
@@ -130,8 +144,12 @@ async function synthesizeSpeechBytes(env, text, customVoiceId, clientElKey) {
             const ab = await r.arrayBuffer();
             if (ab.byteLength > 250) return { bytes: ab, mime: 'audio/mpeg', provider: `elevenlabs:${mId}` };
           }
-          // If 401/403 (IP block or invalid key), don't waste 3 extra retries
-          if (r.status === 401) break;
+          // Cache 401 (e.g. missing text_to_speech permission) so every live call turn avoids a wasted 500ms 401 roundtrip!
+          if (r.status === 401) {
+            unpermittedElevenKeyCache = elKey;
+            hitAuthBlock = true;
+            break;
+          }
         } catch {}
       }
     }
@@ -439,7 +457,7 @@ async function askWorkersAI(env, text, history = [], sysPrompt = SYSTEM_PROMPT, 
     })),
     { role: 'user', content: text },
   ];
-  for (const m of ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct']) {
+  for (const m of ['@cf/meta/llama-3.1-8b-instruct-fast', '@cf/meta/llama-3.3-70b-instruct-fp8-fast', '@cf/meta/llama-3.1-8b-instruct']) {
     try {
       const res = await env.AI.run(m, { messages, max_tokens: maxTokens, temperature: 0.75 });
       const out =
@@ -484,6 +502,234 @@ async function askBrain(env, text, history = [], sysPrompt = SYSTEM_PROMPT, maxT
     } catch {}
   }
   return await askWorkersAI(env, text, history, sysPrompt, maxTokens);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 👑 HEAD BOT AUTOPILOT — LIVE WEB RESEARCH + OPEN-WEBSITE FOOTAGE FINDER
+// ─────────────────────────────────────────────────────────────────────────────
+async function askGroundedResearch(env, query) {
+  const cleanKey = String(env.GEMINI_API_KEY || '').trim();
+  if (!cleanKey) return null;
+  const payload = {
+    contents: [{ role: 'user', parts: [{ text:
+      `Live web research on "${query}". Give me ONLY verified, current facts from real websites in 5 tight bullet lines (Roman Hinglish, max 30 words each).` }] }],
+    tools: [{ google_search: {} }],
+    generationConfig: { temperature: 0.35, maxOutputTokens: 1200 },
+  };
+  try {
+    const res = await callGoogleEndpoint(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+      cleanKey,
+      payload
+    );
+    let text = '';
+    const chunks = [];
+    if (res?.ok && res.json?.candidates) {
+      text = (res.json.candidates[0]?.content?.parts || []).map((x) => x.text || '').join('');
+      const gc = res.json.candidates[0]?.groundingMetadata?.groundingChunks || [];
+      for (const c of gc) if (c?.web?.uri) chunks.push({ site: c.web.title || 'Web Source', url: c.web.uri, title: c.web.title || '' });
+    }
+    if (!text) {
+      const res2 = await callGoogleEndpoint(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+        cleanKey,
+        payload
+      );
+      if (res2?.ok) {
+        const cand = res2.json?.candidates?.[0];
+        text = (cand?.content?.parts || []).map((x) => x.text || '').join('').trim();
+        for (const c of cand?.groundingMetadata?.groundingChunks || []) {
+          if (c?.web?.uri) chunks.push({ site: String(c.web.title || 'Web Source').slice(0, 40), url: c.web.uri, title: String(c.web.title || '').slice(0, 160) });
+        }
+      }
+    }
+    if (!text) return null;
+    return { text: text.trim(), sources: chunks.slice(0, 8) };
+  } catch {
+    return null;
+  }
+}
+
+async function findOpenWebsiteClips(query) {
+  const clips = [];
+  const found = [];
+  const grab = async (url, ms = 7000) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(ms) });
+      return r.ok ? await r.json() : null;
+    } catch { return null; }
+  };
+  const q = String(query || 'artificial intelligence').trim().slice(0, 70);
+
+  // 1) Wikimedia Commons — free-licence motion files
+  const c = await grab(`https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrsearch=${encodeURIComponent('filetype:video ' + q)}&gsrlimit=8&prop=imageinfo&iiprop=url|mime|size&origin=*&format=json`);
+  for (const pg of Object.values(c?.query?.pages || {})) {
+    const info = pg?.imageinfo?.[0];
+    const url = String(info?.url || '');
+    const size = Number(info?.size || 0);
+    if (url && /\.(webm|mp4|ogv)(\?|$)/i.test(url) && size < 26000000) {
+      clips.push(url);
+      found.push({ site: 'Wikimedia Commons', title: String(pg.title || '').replace(/^File:/i, ''), url: String(pg.descriptionurl || url), snippet: `${(size / 1000000).toFixed(1)} MB free-license HD footage`, kind: 'video' });
+    }
+  }
+
+  // 2) NASA Image Library — public-domain HD video (direct mp4 through manifest)
+  const n = await grab(`https://images-api.nasa.gov/search?q=${encodeURIComponent(q)}&media_type=video&page_size=5`);
+  for (const it of (n?.collection?.items || []).slice(0, 5)) {
+    const meta = it?.data?.[0] || {};
+    const manifest = it?.links?.self?.href || '';
+    if (!manifest) continue;
+    const mj = await grab(manifest, 5000);
+    const mp4 = Array.isArray(mj) ? mj.find((u) => typeof u === 'string' && u.toLowerCase().endsWith('.mp4')) : '';
+    if (mp4) {
+      clips.push(mp4);
+      found.push({ site: 'NASA Image Library', title: String(meta.title || 'NASA footage').slice(0, 150), url: String(meta.url || 'https://images.nasa.gov'), snippet: String(meta.description || 'Public-domain HD footage').slice(0, 170), kind: 'video' });
+    }
+  }
+
+  // 3) Internet Archive — free movies / newsreels
+  const ia = await grab(`https://archive.org/advancedsearch.php?q=${encodeURIComponent(q + ' AND mediatype:(movies)')}&fl%5B%5D=identifier&fl%5B%5D=title&rows=4&output=json`);
+  for (const d of (ia?.response?.docs || []).slice(0, 4)) {
+    const ident = String(d.identifier || '');
+    if (!ident) continue;
+    const md = await grab(`https://archive.org/metadata/${ident}/files`, 5000);
+    const vids = (md?.files || []).filter((f) => typeof f?.name === 'string' && /\.mp4$/i.test(f.name) && Number(f.size || 0) < 60000000);
+    vids.sort((a, b) => Number(a.size || 0) - Number(b.size || 0));
+    found.push({ site: 'Internet Archive', title: String(Array.isArray(d.title) ? d.title[0] : d.title || ident).slice(0, 150), url: `https://archive.org/details/${ident}`, snippet: 'Free archive motion picture', kind: 'video' });
+    if (vids[0]?.name) clips.push(`https://archive.org/download/${ident}/${encodeURIComponent(vids[0].name)}`);
+  }
+
+  return { clips: clips.slice(0, 12), sources: found.slice(0, 10) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🛰️ JARVIS AUTONOMY HELPERS — apne KHUD ke content ke comments padhna / reply
+// ─────────────────────────────────────────────────────────────────────────────
+async function ytGetOwnChannelId(token) {
+  const r = await fetch('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true', {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) return '';
+  const j = await r.json();
+  return String(j?.items?.[0]?.id || '');
+}
+
+async function ytVideoBelongsToChannel(token, videoId, channelId) {
+  const r = await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${encodeURIComponent(videoId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) return false;
+  const j = await r.json();
+  const owner = String(j?.items?.[0]?.snippet?.channelId || '');
+  return Boolean(owner && channelId && owner === channelId);
+}
+
+async function ytReadComments(env, token, videoId, maxResults) {
+  const r = await fetch(
+    `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&videoId=${encodeURIComponent(videoId)}&order=relevance&textFormat=plainText&maxResults=${Math.min(50, Math.max(5, maxResults || 20))}`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) }
+  );
+  if (!r.ok) return { error: `YouTube comments ${r.status}: ${(await r.text()).slice(0, 160)}`, comments: [] };
+  const j = await r.json();
+  const comments = (j?.items || []).map((it) => ({
+    id: String(it?.snippet?.topLevelComment?.id || ''),
+    threadId: String(it?.id || ''),
+    author: String(it?.snippet?.topLevelComment?.snippet?.authorDisplayName || 'viewer'),
+    authorChannel: String(it?.snippet?.topLevelComment?.snippet?.authorChannelId?.value || ''),
+    text: String(it?.snippet?.topLevelComment?.snippet?.textDisplay || '').slice(0, 700),
+    likes: Number(it?.snippet?.topLevelComment?.snippet?.likeCount || 0),
+    publishedAt: String(it?.snippet?.topLevelComment?.snippet?.publishedAt || ''),
+    replyCount: Number(it?.snippet?.totalReplyCount || 0),
+    isOwn: String(it?.snippet?.topLevelComment?.snippet?.authorChannelId?.value || '') === String(it?.snippet?.channelId || ''),
+  }));
+  return { comments, nextPageToken: String(j?.nextPageToken || '') };
+}
+
+async function ytReplyToComment(env, token, parentId, text) {
+  const r = await fetch('https://www.googleapis.com/youtube/v3/comments', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ snippet: { parentId, textSnippet: { text: String(text).slice(0, 8000) } } }),
+    signal: AbortSignal.timeout(15000),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { error: `YouTube reply ${r.status}: ${JSON.stringify(j?.error?.message || '').slice(0, 200)}` };
+  return { ok: true, id: String(j?.id || ''), htmlLang: String(j?.snippet?.htmlLang || '') };
+}
+
+async function igGraph(pathAndQuery, token, method = 'GET', formBody = null) {
+  const sep = pathAndQuery.includes('?') ? '&' : '?';
+  const url = `https://graph.facebook.com/v19.0${pathAndQuery}${sep}access_token=${encodeURIComponent(token)}`;
+  const init = { method, signal: AbortSignal.timeout(15000) };
+  if (formBody) {
+    init.headers = { 'content-type': 'application/x-www-form-urlencoded' };
+    init.body = new URLSearchParams(formBody).toString();
+  }
+  const r = await fetch(url, init);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { error: `IG Graph ${r.status}: ${String(j?.error?.message || '').slice(0, 220)}` };
+  return { ok: true, json: j };
+}
+
+/** Sub-bots ke liye: live crypto headlines (real news) — grounded agar available ho. */
+async function liveCryptoHeadlines(env) {
+  const out = await askBrain(
+    env,
+    'Give 4 breaking crypto & Indian market headlines RIGHT NOW as strict JSON: {"headlines":[{"title":"...","source":"...","sentiment":"BULLISH|BEARISH|NEUTRAL","impactScore":88,"coins":["BTC"],"summary":"one line"}]}',
+    [],
+    'Return strictly valid JSON only.',
+    800
+  );
+  const j = parseJsonSafe(out.text);
+  return Array.isArray(j?.headlines) ? j.headlines.slice(0, 6) : [];
+}
+
+async function buildAutopilotBrief(env, goal, niche) {
+  const [grounded, footage] = await Promise.all([askGroundedResearch(env, goal), findOpenWebsiteClips(goal)]);
+  let evidence = [
+    ...(grounded?.text ? [`[LIVE WEB] ${grounded.text}`] : []),
+    ...footage.sources.map((s) => `[${s.site}] ${s.title}: ${s.snippet}`),
+  ].join('\n');
+
+  let title = `${goal} — Live Web Research 🔥`;
+  let caption = `${goal} ka taaza research-based breakdown!`;
+  let hashtags = ['shorts', 'reels', 'viral', 'ai', 'trending'];
+  let facts = [];
+  let bestTime = '6:30 PM – 8:30 PM IST';
+
+  try {
+    const out = await askBrain(
+      env,
+      `You are the 👑 HEAD BOT of a 41-agent video newsroom. Boss goal: "${goal}" (niche: "${niche}").\n` +
+      `Use ONLY this live web evidence, invent nothing:\n${evidence || '(no external evidence — write a smart general brief)'}\n\n` +
+      `Return ONLY JSON: {"title":"max 70 char viral title","brief":"4 tight Roman Hinglish sentences summarizing real findings","facts":["3 short bullets"],"caption":"Instagram+Facebook caption in Roman Hinglish with 1 CTA","hashtags":["5 tags no #"],"bestTime":"IST slot"}`,
+      [],
+      'Return strictly valid JSON only.',
+      1100
+    );
+    const j = parseJsonSafe(out.text);
+    if (j?.title) title = String(j.title).slice(0, 90);
+    if (j?.caption) caption = String(j.caption).slice(0, 480);
+    if (Array.isArray(j?.hashtags) && j.hashtags.length) hashtags = j.hashtags.map((t) => String(t).replace(/^#/, '')).slice(0, 8);
+    if (Array.isArray(j?.facts)) facts = j.facts.map((f) => String(f).slice(0, 190)).slice(0, 6);
+    if (j?.brief) evidence = `${j.brief}\n\n${evidence}`.slice(0, 1600);
+    if (j?.bestTime) bestTime = String(j.bestTime).slice(0, 60);
+  } catch {}
+
+  const srcList = [...(grounded?.sources || []).map((s) => ({ site: s.site || 'Web', title: s.title || s.url, url: s.url, snippet: 'Live Google Search grounded source', kind: 'reference' })), ...footage.sources];
+  return {
+    brief: evidence.slice(0, 1600),
+    facts,
+    sources: srcList.slice(0, 10),
+    clipUrls: footage.clips,
+    title,
+    caption,
+    hashtags,
+    bestTime,
+    engine: grounded ? 'worker:gemini-google-search-grounded' : 'worker:open-api-research',
+  };
 }
 
 function parseJsonSafe(raw) {
@@ -1143,12 +1389,145 @@ function renderSetupPage(env, origin, result) {
 
 /* -------------------------------- Router --------------------------------- */
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 🌙 JARVIS NIGHT SHIFT — server-side autonomous comment patrol + digest
+//    (Cron har 10 min chalta hai; phone band ho tab bhi yeh chalta rehta hai)
+// ─────────────────────────────────────────────────────────────────────────────
+const JARVIS_KV_KEY = 'jarvis:' + 'core_state';
+const BRAIN_KV_KEY = 'jarvis:brain' + '_md';
+
+async function loadJarvisState(env) {
+  const base = {
+    enabled: false,
+    maxRepliesPerDay: 15,
+    repliesPerVideo: 3,
+    minLikes: 0,
+    onlyUnanswered: true,
+    lastRunDay: '',
+    repliesToday: 0,
+    repliedIds: [],
+    lastNote: '',
+  };
+  if (!env.APEX_KV) return base;
+  try {
+    const saved = await env.APEX_KV.get(JARVIS_KV_KEY, 'json');
+    return { ...base, ...(saved || {}) };
+  } catch {
+    return base;
+  }
+}
+
+async function saveJarvisState(env, st) {
+  if (!env.APEX_KV) return;
+  try {
+    await env.APEX_KV.put(JARVIS_KV_KEY, JSON.stringify({ ...st, repliedIds: (st.repliedIds || []).slice(-400) }));
+  } catch {}
+}
+
+async function ytMyUploadsVideoIds(token, limit = 5) {
+  const chRes = await fetch('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true', {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!chRes.ok) return { error: `channels ${chRes.status}` };
+  const ch = await chRes.json();
+  const uploadsId = String(ch?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads || '');
+  if (!uploadsId) return { error: 'uploads playlist nahi mila (youtube.readonly scope chahiye)' };
+  const pi = await fetch(
+    `https://www.googleapis.com/youtube/v3/playlistItems?part=contentDetails&maxResults=${Math.min(10, limit)}&playlistId=${uploadsId}`,
+    { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12000) }
+  );
+  if (!pi.ok) return { error: `playlistItems ${pi.status}` };
+  const pj = await pi.json();
+  const ids = (pj?.items || []).map((x) => String(x?.contentDetails?.videoId || '')).filter(Boolean);
+  return { ids };
+}
+
+async function jarvisNightShift(env) {
+  const st = await loadJarvisState(env);
+  if (!st.enabled) return { ran: false, reason: 'night shift OFF' };
+
+  const istDay = new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  if (st.lastRunDay !== istDay) {
+    st.lastRunDay = istDay;
+    st.repliesToday = 0;
+  }
+  const cap = Number(st.maxRepliesPerDay || 15);
+  if (st.repliesToday >= cap) return { ran: false, reason: 'aaj ka reply cap poora', note: st.lastNote };
+
+  let token = '';
+  try {
+    token = await resolveYouTubeAccessToken(env, '');
+  } catch (e) {
+    return { ran: false, reason: `YouTube token: ${e.message}` };
+  }
+  if (!token) return { ran: false, reason: 'YouTube connect nahi hai' };
+
+  const mine = await ytGetOwnChannelId(token);
+  const uploaded = await ytMyUploadsVideoIds(token, 5);
+  if (uploaded.error) return { ran: false, reason: uploaded.error };
+
+  let replied = 0;
+  let read = 0;
+  const done = new Set(st.repliedIds || []);
+
+  for (const videoId of uploaded.ids || []) {
+    if (replied >= 6 || st.repliesToday >= cap) break;
+    const c = await ytReadComments(env, token, videoId, 25);
+    if (c.error) continue;
+    const fresh = (c.comments || []).filter((x) => !x.isOwn && x.text && !done.has(x.id));
+    read += fresh.length;
+    const picked = fresh.sort((a, b) => Number(b.likes || 0) - Number(a.likes || 0)).slice(0, Number(st.repliesPerVideo || 3));
+    for (const cm of picked) {
+      if (Number(cm.likes || 0) < Number(st.minLikes || 0)) continue;
+      if (st.onlyUnanswered && Number(cm.replyCount || 0) > 0) continue;
+      let text = '';
+      try {
+        const out = await askBrain(
+          env,
+          `Reply as the creator to this viewer comment on my YouTube short. Roman Hinglish, 1 line, max 22 words, warm and genuinely useful, no links, no begging for follows. Comment from @${cm.author}: "${cm.text.slice(0, 300)}"`,
+          [],
+          'Sirf reply text do, koi prefix nahi.',
+          120
+        );
+        text = String(out.text || '').replace(/^[\s"'`]+|[\s"'`]+$/g, '').slice(0, 300);
+      } catch {}
+      if (!text) continue;
+      const r = await ytReplyToComment(env, token, cm.id, text);
+      if (r.error) break;
+      done.add(cm.id);
+      replied += 1;
+      st.repliesToday = Number(st.repliesToday || 0) + 1;
+    }
+  }
+
+  st.repliedIds = [...done];
+  st.lastNote = `${read} comments padhe, ${replied} khud reply kiye (recent uploads: ${(uploaded.ids || []).length})`;
+  await saveJarvisState(env, st);
+
+  const firstOwner = String(env.TELEGRAM_ALLOWED_CHATS || '').split(',')[0].trim();
+  if (env.TELEGRAM_BOT_TOKEN && firstOwner && replied > 0) {
+    await send(
+      env.TELEGRAM_BOT_TOKEN,
+      firstOwner,
+      `🌙 <b>Jarvis Night Shift</b>\n💬 ${esc(st.lastNote)}\n🔐 Sirf aapke apne channel ke comments ka reply kiya gaya.`
+    ).catch(() => {});
+  }
+  return { ran: true, replied, read, note: st.lastNote };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      const reqHeaders = request.headers.get('access-control-request-headers');
+      return new Response(null, {
+        status: 204,
+        headers: reqHeaders
+          ? { ...CORS_HEADERS, 'access-control-allow-headers': reqHeaders }
+          : CORS_HEADERS,
+      });
     }
 
     if (url.pathname === '/setup') {
@@ -1236,6 +1615,19 @@ export default {
           },
         ],
       });
+    }
+
+// ---- 👑 HEAD BOT AUTOPILOT: live research + open-website footage (/agent/autopilot) ----
+    if (request.method === 'POST' && url.pathname === '/agent/autopilot') {
+      const body = await request.json().catch(() => ({}));
+      const goal = String(body?.goal || 'AI Agents Se Business Growth').slice(0, 180);
+      const niche = String(body?.niche || goal).slice(0, 120);
+      try {
+        const pack = await buildAutopilotBrief(env, goal, niche);
+        return jsonRes(pack);
+      } catch (e) {
+        return jsonRes({ error: String(e?.message || e) }, 500);
+      }
     }
 
     // ---- YouTube Shorts Script & Scene Planner (/yt/plan) ----
@@ -1409,30 +1801,47 @@ export default {
     // ---- LiveKit-Grade Single-Roundtrip Voice Pipeline (/voice-turn: VAD + STT + Brain + TTS) ----
     if (request.method === 'POST' && url.pathname === '/voice-turn') {
       try {
-        const preRecognized = request.headers.get('x-stt-text')
+        const ctype = (request.headers.get('content-type') || '').toLowerCase();
+        let jsonPayload = null;
+        if (ctype.includes('text/plain') || ctype.includes('application/json')) {
+          jsonPayload = await request.json().catch(() => null);
+        }
+
+        const preRecognized = jsonPayload?.text
+          ? String(jsonPayload.text).trim()
+          : request.headers.get('x-stt-text')
           ? decodeURIComponent(request.headers.get('x-stt-text')).trim()
           : '';
 
         let heard = preRecognized;
         if (!heard) {
-          const ab = await request.arrayBuffer();
-          const bytes = new Uint8Array(ab);
-          if (bytes.byteLength < 1600) {
+          let bytes;
+          let b64 = '';
+          if (jsonPayload?.wavBase64) {
+            b64 = String(jsonPayload.wavBase64).replace(/^data:[^;]+;base64,/, '').trim();
+            bytes = base64ToUint8(b64);
+          } else {
+            const ab = await request.arrayBuffer();
+            bytes = new Uint8Array(ab);
+          }
+          if (!bytes || bytes.byteLength < 1600) {
             return jsonRes({ ok: true, empty: true, heard: '' });
           }
 
           // 1) Fast Whisper Large v3 Turbo STT with VAD filter + Hindi/English prompt biasing
           try {
-            let bin = '';
-            const chunkSize = 0x8000;
-            for (let i = 0; i < bytes.length; i += chunkSize) {
-              bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+            if (!b64) {
+              let bin = '';
+              const chunkSize = 0x8000;
+              for (let i = 0; i < bytes.length; i += chunkSize) {
+                bin += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+              }
+              b64 = btoa(bin);
             }
-            const b64 = btoa(bin);
             const res = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {
               audio: b64,
               vad_filter: true,
-              initial_prompt: 'Hinglish, Hindi, English command to JARVIS personal AI assistant.',
+              initial_prompt: 'Hinglish, Hindi, English conversation with APEX AI assistant.',
             });
             heard = String(res?.text || '').trim();
           } catch {
@@ -1455,13 +1864,17 @@ export default {
           return jsonRes({ ok: true, empty: true, heard: '' });
         }
 
-        // Optional conversation history from header
-        let hist = [];
-        try {
-          const hRaw = request.headers.get('x-voice-history');
-          if (hRaw) hist = JSON.parse(decodeURIComponent(hRaw));
-        } catch {}
-        const walletCtx = request.headers.get('x-wallet-context')
+        // Conversation history & memory context from zero-preflight JSON body OR legacy headers
+        let hist = Array.isArray(jsonPayload?.history) ? jsonPayload.history : [];
+        if (!hist.length) {
+          try {
+            const hRaw = request.headers.get('x-voice-history');
+            if (hRaw) hist = JSON.parse(decodeURIComponent(hRaw));
+          } catch {}
+        }
+        const walletCtx = jsonPayload?.walletContext
+          ? String(jsonPayload.walletContext)
+          : request.headers.get('x-wallet-context')
           ? decodeURIComponent(request.headers.get('x-wallet-context'))
           : '';
 
@@ -1566,9 +1979,9 @@ export default {
         let audioBase64 = '';
         let mime = 'audio/mpeg';
         let ttsProvider = 'client-direct-elevenlabs';
-        const skipServerTts = request.headers.get('x-skip-tts') === '1';
-        const hdrVoiceId = request.headers.get('x-elevenlabs-voice') || '';
-        const hdrElKey = request.headers.get('x-elevenlabs-key') || '';
+        const skipServerTts = Boolean(jsonPayload?.skipTts) || request.headers.get('x-skip-tts') === '1';
+        const hdrVoiceId = String(jsonPayload?.voiceId || request.headers.get('x-elevenlabs-voice') || '');
+        const hdrElKey = String(jsonPayload?.elevenApiKey || request.headers.get('x-elevenlabs-key') || '');
         if (!skipServerTts) {
           try {
             const tts = await synthesizeSpeechBytes(env, replyText, hdrVoiceId, hdrElKey);
@@ -2376,6 +2789,266 @@ export default {
     }
 
     // ---- Check & Verify Live YouTube Connection Status (/yt/status) ----
+// ---- 📸 Instagram AUTO-PUBLISH (apne Business account par, official Graph API) ----
+if (request.method === 'POST' && url.pathname === '/social/ig/publish') {
+  const b = await request.json().catch(() => ({}));
+  const token = String(b?.igAccessToken || '').trim();
+  const igUserId = String(b?.igUserId || '').replace(/[^0-9_]/g, '').slice(0, 40);
+  const videoUrl = String(b?.videoUrl || '').trim();
+  const caption = String(b?.caption || '').slice(0, 2100);
+  const shareStatus = b?.share_to_feed !== false;
+  if (!token || !igUserId) return jsonRes({ ok: false, error: 'igUserId + igAccessToken required' }, 400);
+  if (!/^https:\/\//i.test(videoUrl)) return jsonRes({ ok: false, error: 'Instagram ko PUBLIC video URL chahiye (Graph API direct file upload support nahi karta)' }, 400);
+
+  const create = await igGraph(`/${igUserId}/media`, token, 'POST', {
+    media_type: 'REELS',
+    video_url: videoUrl,
+    caption,
+    share_to_feed: shareStatus ? 'true' : 'false',
+  });
+  if (create.error) return jsonRes({ ok: false, step: 'container', error: create.error }, 502);
+  const containerId = String(create.json?.id || '');
+  if (!containerId) return jsonRes({ ok: false, step: 'container', error: 'container id nahi mila' }, 502);
+
+  let status = '';
+  for (let i = 0; i < 18; i += 1) {
+    const st = await igGraph(`/${containerId}?fields=status_code`, token);
+    status = String(st.json?.status_code || st.json?.status || '');
+    if (status === 'FINISHED') break;
+    if (status === 'ERROR') return jsonRes({ ok: false, step: 'processing', error: String(st.json?.error_message || 'Meta ne video reject kar diya') }, 502);
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  if (status !== 'FINISHED') return jsonRes({ ok: false, step: 'processing', error: `status: ${status || 'timeout'}`, containerId }, 504);
+
+  const pub = await igGraph(`/${igUserId}/media_publish`, token, 'POST', { creation_id: containerId });
+  if (pub.error) return jsonRes({ ok: false, step: 'publish', error: pub.error, containerId }, 502);
+  const mediaId = String(pub.json?.id || '');
+  let permalink = '';
+  if (mediaId) {
+    const info = await igGraph(`/${mediaId}?fields=permalink`, token);
+    permalink = String(info.json?.permalink || '');
+  }
+  const firstOwner = String(env.TELEGRAM_ALLOWED_CHATS || '').split(',')[0].trim();
+  if (env.TELEGRAM_BOT_TOKEN && firstOwner) {
+    await send(env.TELEGRAM_BOT_TOKEN, firstOwner, `📸 <b>Instagram Reel auto-publish ho gaya!</b>\n${esc(permalink || mediaId || '')}`).catch(() => {});
+  }
+  return jsonRes({ ok: true, platform: 'instagram', mediaId, permalink });
+}
+
+// ---- 📚 APEX Brain File (persistent AI memory copy, KV me rehta hai) ----
+async function loadBrainMarkdown(env) {
+  if (!env.APEX_KV) return '';
+  try {
+    return String((await env.APEX_KV.get(BRAIN_KV_KEY)) || '');
+  } catch {
+    return '';
+  }
+}
+
+async function handleBrainFile(request, url, env) {
+  // APEX_BRAIN_KEY set ho toh GET+POST dono par X-Apex-Brain header chahiye — worker URL public
+  // hota hai aur brain file me personal notes hote hain, isliye lock recommend kiya gaya hai.
+  if (env.APEX_BRAIN_KEY) {
+    const got = String(request.headers.get('x-apex-brain') || url.searchParams.get('key') || '');
+    if (got !== String(env.APEX_BRAIN_KEY)) return jsonRes({ ok: false, error: 'bad_brain_key' }, 403);
+  }
+  if (!env.APEX_KV) return jsonRes({ ok: false, error: 'APEX_KV binding missing (wrangler.toml me namespace add karo)' }, 200);
+
+  if (request.method === 'GET') {
+    const markdown = await loadBrainMarkdown(env);
+    return jsonRes({ ok: !!markdown, markdown, bytes: markdown.length });
+  }
+  if (request.method !== 'POST') return jsonRes({ ok: false, error: 'method not allowed' }, 405);
+
+  const b = await request.json().catch(() => ({}));
+  const md = String(b?.markdown || '').trim();
+  if (!md) return jsonRes({ ok: false, error: 'markdown missing' }, 400);
+  if (md.length > 120000) return jsonRes({ ok: false, error: 'brain file bahut badi (120k char max)' }, 413);
+  try {
+    await env.APEX_KV.put(BRAIN_KV_KEY, md);
+    return jsonRes({ ok: true, bytes: md.length, at: Date.now() });
+  } catch (e) {
+    return jsonRes({ ok: false, error: `KV put failed: ${String(e?.message || e)}` });
+  }
+}
+
+// ---- 🌙 Jarvis Night Shift config (server-side autonomous comment patrol) ----
+    if (url.pathname === '/jarvis/brain') return await handleBrainFile(request, url, env);
+    if (url.pathname === '/jarvis/config') {
+      if (request.method === 'GET') {
+        const st0 = await loadJarvisState(env);
+        return jsonRes({ ok: true, state: st0, kvReady: !!env.APEX_KV, ytAuth: !!(env.YOUTUBE_REFRESH_TOKEN || env.YOUTUBE_ACCESS_TOKEN) });
+      }
+      const b = await request.json().catch(() => ({}));
+      const cur = await loadJarvisState(env);
+      const next = {
+        ...cur,
+        enabled: typeof b?.enabled === 'boolean' ? b.enabled : cur.enabled,
+        maxRepliesPerDay: Math.max(1, Math.min(60, Number(b?.maxRepliesPerDay) || cur.maxRepliesPerDay)),
+        repliesPerVideo: Math.max(1, Math.min(10, Number(b?.repliesPerVideo) || cur.repliesPerVideo)),
+        minLikes: Number.isFinite(Number(b?.minLikes)) ? Math.max(0, Number(b.minLikes)) : cur.minLikes,
+        onlyUnanswered: typeof b?.onlyUnanswered === 'boolean' ? b.onlyUnanswered : cur.onlyUnanswered,
+      };
+      await saveJarvisState(env, next);
+      let test = null;
+      if (next.enabled) test = await jarvisNightShift(env).catch((e) => ({ ran: false, reason: String(e?.message || e) }));
+      return jsonRes({ ok: true, state: next, test, kvReady: !!env.APEX_KV });
+    }
+
+// ─────────── 🛰️ JARVIS AUTONOMY: OWN-CONTENT COMMENT PATROL ───────────
+    if (request.method === 'POST' && url.pathname === '/social/comments') {
+      const b = await request.json().catch(() => ({}));
+      const platform = String(b?.platform || 'youtube').toLowerCase();
+
+      if (platform === 'youtube') {
+        const videoId = String(b?.videoId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 16);
+        if (!videoId) return jsonRes({ ok: false, error: 'videoId required' }, 400);
+        let token = '';
+        try {
+          token = await resolveYouTubeAccessToken(env, b?.accessToken);
+        } catch (e) {
+          return jsonRes({ ok: false, error: String(e?.message || e), needAuth: true }, 401);
+        }
+        if (!token) return jsonRes({ ok: false, error: 'YouTube connect karein (🔑 KHUD LOGIN SETUP)', needAuth: true }, 401);
+
+        const mine = await ytGetOwnChannelId(token);
+        const own = mine ? await ytVideoBelongsToChannel(token, videoId, mine) : false;
+        const res = await ytReadComments(env, token, videoId, b?.maxResults);
+        if (res.error) return jsonRes({ ok: false, error: res.error }, 502);
+        return jsonRes({ ok: true, platform, videoId, ownChannel: mine, isOwnContent: own, comments: res.comments, nextPageToken: res.nextPageToken });
+      }
+
+      if (platform === 'instagram') {
+        const mediaId = String(b?.mediaId || '').replace(/[^0-9_]/g, '').slice(0, 60);
+        const token = String(b?.igAccessToken || '').trim();
+        if (!mediaId || !token) return jsonRes({ ok: false, error: 'apna mediaId + Instagram access token chahiye' }, 400);
+        const r = await igGraph(`/${mediaId}/comments?fields=id,text,username,timestamp,like_count&limit=${Math.min(50, Math.max(5, Number(b?.maxResults) || 20))}`, token);
+        if (r.error) return jsonRes({ ok: false, error: r.error }, 502);
+        const comments = (r.json?.data || []).map((c) => ({
+          id: String(c.id || ''),
+          author: String(c.username || 'viewer'),
+          text: String(c.text || '').slice(0, 700),
+          likes: Number(c.like_count || 0),
+          publishedAt: String(c.timestamp || ''),
+        }));
+        return jsonRes({ ok: true, platform, mediaId, isOwnContent: true, comments });
+      }
+
+      return jsonRes({ ok: false, error: 'platform youtube ya instagram hona chahiye' }, 400);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/social/reply') {
+      const b = await request.json().catch(() => ({}));
+      const platform = String(b?.platform || 'youtube').toLowerCase();
+      const text = String(b?.text || '').trim().slice(0, 2000);
+      if (!text) return jsonRes({ ok: false, error: 'reply text empty' }, 400);
+
+      if (platform === 'youtube') {
+        const parentId = String(b?.parentId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
+        if (!parentId) return jsonRes({ ok: false, error: 'parentId required' }, 400);
+        let token = '';
+        try {
+          token = await resolveYouTubeAccessToken(env, b?.accessToken);
+        } catch (e) {
+          return jsonRes({ ok: false, error: String(e?.message || e), needAuth: true }, 401);
+        }
+        if (!token) return jsonRes({ ok: false, error: 'YouTube connect karein', needAuth: true }, 401);
+        const videoId = String(b?.videoId || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 16);
+        if (videoId) {
+          const mine = await ytGetOwnChannelId(token);
+          const own = mine ? await ytVideoBelongsToChannel(token, videoId, mine) : false;
+          if (!own) {
+            return jsonRes(
+              { ok: false, refused: 'not_own_video', error: 'Yeh video aapke channel ka nahi hai — dusron ke videos par automated commenting YouTube/Spam policy ke khilaf hai, isliye sirf draft banega.' },
+              403
+            );
+          }
+        }
+        const r = await ytReplyToComment(env, token, parentId, text);
+        if (r.error) return jsonRes({ ok: false, error: r.error }, 502);
+        return jsonRes({ ok: true, platform, replyId: r.id });
+      }
+
+      if (platform === 'instagram') {
+        const commentId = String(b?.commentId || '').replace(/[^0-9_]/g, '').slice(0, 60);
+        const token = String(b?.igAccessToken || '').trim();
+        if (!commentId || !token) return jsonRes({ ok: false, error: 'commentId + igAccessToken required' }, 400);
+        const r = await igGraph(`/${commentId}/replies`, token, 'POST', { message: text });
+        if (r.error) return jsonRes({ ok: false, error: r.error }, 502);
+        return jsonRes({ ok: true, platform, replyId: String(r.json?.id || '') });
+      }
+
+      return jsonRes({ ok: false, error: 'platform invalid' }, 400);
+    }
+
+    // Apne hi recently published Instagram media (taaki mediaId khud mil jaye)
+    if (request.method === 'POST' && url.pathname === '/social/ig/media') {
+      const b = await request.json().catch(() => ({}));
+      const token = String(b?.igAccessToken || '').trim();
+      const igUserId = String(b?.igUserId || '').replace(/[^0-9_]/g, '').slice(0, 40);
+      if (!token || !igUserId) return jsonRes({ ok: false, error: 'igUserId + igAccessToken required' }, 400);
+      const r = await igGraph(`/${igUserId}/media?fields=id,caption,media_type,permalink,timestamp&limit=${Math.min(25, Math.max(3, Number(b?.limit) || 12))}`, token);
+      if (r.error) return jsonRes({ ok: false, error: r.error }, 502);
+      const items = (r.json?.data || []).filter((m) => m?.id).map((m) => ({
+        mediaId: String(m.id),
+        caption: String(m.caption || '').slice(0, 160),
+        type: String(m.media_type || ''),
+        permalink: String(m.permalink || ''),
+        timestamp: String(m.timestamp || ''),
+      }));
+      return jsonRes({ ok: true, items });
+    }
+
+    // ─────────── 🛰️ JARVIS AUTONOMY: SUB-BOTS RESEARCH → HEAD BOT DECISION ───────────
+    if (request.method === 'POST' && url.pathname === '/api/coindcx/research-plan') {
+      const b = await request.json().catch(() => ({}));
+      const snapshots = Array.isArray(b?.snapshots) ? b.snapshots.slice(0, 10) : [];
+      if (!snapshots.length) return jsonRes({ ok: false, error: 'snapshots[] required' }, 400);
+      const limits = b?.limits || {};
+      let headlines = [];
+      try {
+        headlines = await liveCryptoHeadlines(env);
+      } catch {}
+
+      const prompt =
+        `You are the 👑 HEAD BOT of a trading desk. Live external research headlines:\n` +
+        headlines.map((h) => `- ${h.title} [${h.sentiment || '?'}] impact ${h.impactScore || 0} coins ${(h.coins || []).join(',')}`).join('\n') +
+        `\n\nLive CoinDCX technicals:\n` +
+        snapshots
+          .map(
+            (p) =>
+              `- ${p.symbol}: price ${p.price}, chg24h ${p.change24h}%, RSI ${p.rsi}, atr% ${p.atrPct ?? '-'}`
+          )
+          .join('\n') +
+        `\n\nBoss ke risk limits: max ₹${limits.maxInrPerTrade || 500}/trade, max ${limits.maxOpenPositions || 3} open, daily trade cap ${limits.maxTradesPerDay || 12}, daily loss cap ₹${limits.dailyLossCapInr || 1500}, wallet ${b?.walletType || 'auto'}, leverage ${b?.leverage || 3}x.` +
+        `\n\nReturn ONLY JSON: {"plan":[{"symbol":"BTC/INR","side":"LONG|SHORT|BUY|SELL","confidence":0to100,"sizePct":1to100,"leverage":1to20,"tpPct":number,"slPct":number,"reason":"one short Hinglish line citing the news or technical","newsBacked":true}],"veto":"none|reason","summary":"2 line Hinglish head bot decision note"}. ` +
+        `Rules: kam confidence par side "NONE" do, oversize position mat banao, aur sirf upar diye data par rely karo.`;
+
+      try {
+        const out = await askBrain(env, prompt, [], 'Return strictly valid JSON only.', 1200);
+        const j = parseJsonSafe(out.text);
+        if (j && Array.isArray(j.plan)) {
+          const cleanPlan = j.plan
+            .map((x) => ({
+              symbol: String(x?.symbol || '').toUpperCase(),
+              side: ['LONG', 'SHORT', 'BUY', 'SELL', 'NONE'].includes(String(x?.side || '').toUpperCase()) ? String(x.side).toUpperCase() : 'NONE',
+              confidence: Math.max(0, Math.min(100, Number(x?.confidence) || 0)),
+              sizePct: Math.max(1, Math.min(100, Number(x?.sizePct) || 25)),
+              leverage: Math.max(1, Math.min(20, Number(x?.leverage) || 3)),
+              tpPct: Math.max(0.2, Math.min(50, Number(x?.tpPct) || 1.8)),
+              slPct: Math.max(0.2, Math.min(50, Number(x?.slPct) || 1.0)),
+              reason: String(x?.reason || '').slice(0, 240),
+              newsBacked: Boolean(x?.newsBacked),
+            }))
+            .filter((x) => x.symbol);
+          return jsonRes({ ok: true, plan: cleanPlan, veto: String(j?.veto || 'none'), summary: String(j?.summary || '').slice(0, 500), headlines, engine: out.engine });
+        }
+      } catch (e) {
+        return jsonRes({ ok: false, error: String(e?.message || e) }, 502);
+      }
+      return jsonRes({ ok: false, error: 'plan parse failed' }, 502);
+    }
+
     if (url.pathname === '/yt/status') {
       const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
       try {
@@ -2432,7 +3105,13 @@ export default {
       authUrl.searchParams.set('client_id', clientId);
       authUrl.searchParams.set('redirect_uri', `${url.origin}/yt/callback`);
       authUrl.searchParams.set('response_type', 'code');
-      authUrl.searchParams.set('scope', 'https://www.googleapis.com/auth/youtube.upload');
+      const wantScope = String(url.searchParams.get('scope') || '');
+      authUrl.searchParams.set(
+        'scope',
+        wantScope === 'full'
+          ? 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/youtube.readonly'
+          : 'https://www.googleapis.com/auth/youtube.upload'
+      );
       authUrl.searchParams.set('access_type', 'offline');
       authUrl.searchParams.set('prompt', 'consent');
       return Response.redirect(authUrl.toString(), 302);
@@ -2518,6 +3197,9 @@ export default {
             }
           } catch {}
         }
+        // 🌙 Jarvis night shift — apne uploads ke comments padho + khud reply (phone band ho tab bhi)
+        await jarvisNightShift(env).catch(() => {});
+
         if (!autoTradeState.enabled) return;
         await runSmartAutoTradeCycle(env, { forceEntry: false }).catch(() => {});
         if (env.APEX_KV) {
