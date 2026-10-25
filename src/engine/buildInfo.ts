@@ -13,7 +13,7 @@ import { loadSettings } from './headBotAutopilot';
 
 export const BUILD = {
   name: '6.6.15',
-  code: 57,
+  code: 58,
   /** ye list UI badge + voice dono me use hoti hai */
   systems: ['📚 Brain File', '🔐 Awaz Pehchaan', '🎯 Word Confirm', '👁️ Bahar ki Aankh', '🪣 R2 Host', '🐙 GitHub Host', '🎬 Motion Forge', '🎬 Reel engine (auto/motion/footage)', '🔁 Auto catch-up', '🏢 Company Mode', '📊 Day Log', '🎞️ App-Andar Video Hub', '🎙️ Voice Keeper', '🧭 Setup (3 kaam)', '📸 IG Auto', '💰 CoinDCX Desk'],
 } as const;
