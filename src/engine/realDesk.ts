@@ -230,7 +230,7 @@ export async function placeRealOrder(opts: PlaceRealOrderOpts): Promise<RealOrde
   }
   if (!opts.apiKey || !opts.apiSecret) return deny('API key/secret missing');
   const amount = Math.round(Number(opts.inrAmount) || 0);
-  if (amount < 50) return deny('amount kam se kam ₹50');
+  if (amount < 100) return deny('CoinDCX spot minimum ₹100 hai — amount badhao');
   if (amount > limits.maxOrderInr) return deny(`per-order cap ₹${limits.maxOrderInr} — limit badhaani ho to Limits me karo`);
   const spent = spentToday();
   if (spent + amount > limits.maxDayInr) {
@@ -320,5 +320,8 @@ export function realDeskVerdict(b: RealBalance | null, status: { ok: boolean; co
   if (!b) return '🔑 key daal ke TEST karo — tab asli balance dikhega';
   if (b.error) return `⚠️ ${b.error}`;
   if (!b.live) return '🔒 CoinDCX ne live=false diya — keys/permissions check karo (trade permission ON honi chahiye)';
+  if (b.totalInr < 100) {
+    return `⚠️ REAL LIVE hai (keys chal rahi hain) par account me sirf ₹${b.totalInr.toFixed(2)} hai — CoinDCX spot minimum ₹100, isliye order reject hoga. Paisa daalo tabhi 🔴 SEND REAL kaam karega.`;
+  }
   return `✅ REAL LIVE · ₹${b.totalInr.toFixed(0)} total · spot ₹${b.spotInr.toFixed(0)} · futures ₹${b.futuresInr.toFixed(0)}`;
 }
