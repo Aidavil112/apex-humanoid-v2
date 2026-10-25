@@ -11,6 +11,7 @@ export function AgentHubSheet({
   onOpenBotStudio,
   onOpenWorkflow,
   onOpenTrading,
+  onOpenDesk,
   botCount,
   wfCount,
 }: {
@@ -19,6 +20,7 @@ export function AgentHubSheet({
   onOpenBotStudio: () => void;
   onOpenWorkflow: () => void;
   onOpenTrading: () => void;
+  onOpenDesk: () => void;
   botCount: number;
   wfCount: number;
 }) {
@@ -85,6 +87,14 @@ export function AgentHubSheet({
           badge={`${wfCount} flows`}
           gradient="from-cyan-500/20 to-emerald-500/10"
           onClick={onOpenWorkflow}
+        />
+        <Item
+          emoji="🏢"
+          title="AGENT DESK (live floor)"
+          sub="7 agents ek-ek karke — kaun kya padh raha, kya bana raha, saaf dikhta hai"
+          badge="LIVE"
+          gradient="from-fuchsia-500/20 to-purple-500/10"
+          onClick={onOpenDesk}
         />
         <Item
           emoji="📈"

@@ -196,6 +196,15 @@ t('🧩 AgentHub: Bot Studio + Workflow + Trading — teen entry ek sheet', hubU
 t('🧩 Dock me 🧩 launcher + App me teeno modals wired', dockSrc2.includes('onOpenAgents') && appSrc.includes('<AgentHubSheet') && appSrc.includes('<BotStudioModal') && appSrc.includes('<WorkflowAgentModal'));
 t('📈 Trading bot reachable (hub se setTradingBotOpen)', appSrc.includes('onOpenTrading={() => {') && appSrc.includes('setTradingBotOpen(true)'));
 
+// ── 🏢 AGENT DESK (user: "video jaisa system — ek-ek karke agent dikhe") ──
+const deskSrc = eng.readFileSync(new URL('../src/engine/agentDesk.ts', import.meta.url), 'utf8');
+const deskUi = eng.readFileSync(new URL('../src/components/AgentDeskModal.tsx', import.meta.url), 'utf8');
+const hubSrc2 = eng.readFileSync(new URL('../src/components/AgentHubSheet.tsx', import.meta.url), 'utf8');
+t('🏢 Agent Desk: 7 agents, har ek ke asli engines (worker/render/vault/IG)', deskSrc.includes("id: 'scout'") && deskSrc.includes("id: 'post'") && deskSrc.includes('renderMotionForgeVideo') && deskSrc.includes('saveVideoToVault') && deskSrc.includes('publishLatestVaultVideoToInstagram'));
+t('🏢 Desk UI: "kya dekha / kya banaya" per agent + live feed', deskUi.includes('KYA DEKHA / PADHA') && deskUi.includes('KYA BANAYA') && deskUi.includes('LIVE FEED'));
+t('🏢 Desk honest labels: writer template (LLM nahi) + skip reason', deskSrc.includes('LLM nahi') && deskSrc.includes("status: 'warn'") && deskUi.includes('Writer = local template'));
+t('🏢 Hub me 4th entry (Desk) + App wiring', hubSrc2.includes('AGENT DESK') && appSrc.includes('<AgentDeskModal') && appSrc.includes('onOpenDesk'));
+
 console.log('\nerrors: ' + errors.length);
 if (errors.length) console.log([...new Set(errors)].slice(0, 8).map((e) => '   • ' + e).join('\n'));
 console.log(`\nRESULT ${pass}/${pass + fail}` + (fail ? `  ·  FAIL ${fail}` : ' ✅'));
