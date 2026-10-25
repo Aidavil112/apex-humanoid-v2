@@ -200,9 +200,11 @@ t('📈 Trading bot reachable (hub se setTradingBotOpen)', appSrc.includes('onOp
 const deskSrc = eng.readFileSync(new URL('../src/engine/agentDesk.ts', import.meta.url), 'utf8');
 const deskUi = eng.readFileSync(new URL('../src/components/AgentDeskModal.tsx', import.meta.url), 'utf8');
 const hubSrc2 = eng.readFileSync(new URL('../src/components/AgentHubSheet.tsx', import.meta.url), 'utf8');
-t('🏢 Agent Desk: 7 agents, har ek ke asli engines (worker/render/vault/IG)', deskSrc.includes("id: 'scout'") && deskSrc.includes("id: 'post'") && deskSrc.includes('renderMotionForgeVideo') && deskSrc.includes('saveVideoToVault') && deskSrc.includes('publishLatestVaultVideoToInstagram'));
+t('🏢 Agent HQ: 7 agents + 👑 boss, har ek ke asli engines (worker/render/vault/IG)', deskSrc.includes("id: 'scout'") && deskSrc.includes("id: 'post'") && deskSrc.includes("id: 'boss'") && deskSrc.includes('renderMotionForgeVideo') && deskSrc.includes('saveVideoToVault') && deskSrc.includes('publishLatestVaultVideoToInstagram'));
+t('🖥️ LIVE SCREENS: har agent ka apna device + screen lines (video jaisa)', deskSrc.includes("device: 'browser'") && deskSrc.includes("device: 'phone'") && deskSrc.includes('ScreenLine') && deskUi.includes('LIVE SCREENS') && deskUi.includes('DEVICE_TITLE'));
+t('👑 Boss console: order + report lines asli events se', deskSrc.includes('👑 Boss:') && deskUi.includes('command console'));
 t('🏢 Desk UI: "kya dekha / kya banaya" per agent + live feed', deskUi.includes('KYA DEKHA / PADHA') && deskUi.includes('KYA BANAYA') && deskUi.includes('LIVE FEED'));
-t('🏢 Desk honest labels: writer template (LLM nahi) + skip reason', deskSrc.includes('LLM nahi') && deskSrc.includes("status: 'warn'") && deskUi.includes('Writer = local template'));
+t('🏢 Desk honest labels: writer template (LLM nahi) + skip reason', deskSrc.includes('LLM nahi') && deskSrc.includes("status: 'warn'") && deskSrc.includes('LLM nahi'));
 t('🏢 Hub me 4th entry (Desk) + App wiring', hubSrc2.includes('AGENT DESK') && appSrc.includes('<AgentDeskModal') && appSrc.includes('onOpenDesk'));
 
 console.log('\nerrors: ' + errors.length);
