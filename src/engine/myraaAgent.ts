@@ -2,6 +2,7 @@
 // Inspired by Reel 1 (MYRAA Free Jarvis: Direct Song Auto-Play, Smart WhatsApp Auto-Composer, Autonomous Web Research)
 // & Reel 2 (ULTRON Cyber Lock HUD + Multi-Device Sync)
 
+import { apexOpen } from './nativeUi';
 import { hubFetch } from './api';
 import { askGeminiWithUserKey } from './geminiLive';
 
@@ -85,7 +86,7 @@ export async function playSongOrVideoHandsFree(rawQuery: string): Promise<{
     if (bridge?.openUrl) {
       bridge.openUrl(`vnd.youtube://${hit.videoId}`);
     } else {
-      window.open(watchUrl, '_blank', 'noopener,noreferrer');
+      apexOpen(watchUrl);
     }
     return {
       playedDirectId: hit.videoId,
@@ -95,7 +96,7 @@ export async function playSongOrVideoHandsFree(rawQuery: string): Promise<{
 
   const searchUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
   if (bridge?.openUrl) bridge.openUrl(searchUrl);
-  else window.open(searchUrl, '_blank', 'noopener,noreferrer');
+  else apexOpen(searchUrl);
   return {
     playedDirectId: null,
     spokenReply: `${cleanQuery} YouTube par khol diya hai Boss!`,
@@ -135,7 +136,7 @@ export async function composeAndOpenWhatsAppSmart(rawCommand: string): Promise<s
   if (bridge?.openUrl) {
     bridge.openUrl(waUrl);
   } else {
-    window.open(`https://wa.me/?text=${encodeURIComponent(drafted)}`, '_blank', 'noopener,noreferrer');
+    apexOpen(`https://wa.me/?text=${encodeURIComponent(drafted)}`);
   }
 
   return `WhatsApp message tayyar karke khol diya hai: "${drafted}"`;

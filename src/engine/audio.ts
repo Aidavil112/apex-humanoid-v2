@@ -312,30 +312,37 @@ class AudioEngine {
 
   /** Unlock mobile HTML5 STREAM_MUSIC loudspeaker + WebAudio synchronously inside user tap gesture! */
   public unlockSpeaker() {
-    this.ensureCtx();
+    // ⚠️ Ye call 13+ button handlers ki PEHLI statement hai. Pehle agar audio unlock
+    //    me exception aata tha to poora button mar jata tha ("daba, kuch nahi hua").
+    //    v6.6.9 se poora body try/catch — fail ho to chup-chaap silence, button chalega.
     try {
-      (window as any).ApexAndroid?.setSpeakerphone?.(true);
-    } catch {}
-    if (!this.audioEl) {
-      this.audioEl = new Audio();
-      this.audioEl.preload = 'auto';
-      (this.audioEl as any).playsInline = true;
-      this.audioEl.volume = 1.0;
-    }
-    if (!this.speakerUnlocked) {
-      const tinySilentWav = AudioEngine.encodeWav16k([new Float32Array(160)]);
-      const url = URL.createObjectURL(new Blob([tinySilentWav], { type: 'audio/wav' }));
-      this.audioEl.src = url;
-      this.audioEl.volume = 0.01;
-      const p = this.audioEl.play();
-      if (p && typeof p.then === 'function') {
-        p.then(() => {
-          this.speakerUnlocked = true;
-          URL.revokeObjectURL(url);
-        }).catch(() => {
-          URL.revokeObjectURL(url);
-        });
+      this.ensureCtx();
+      try {
+        (window as any).ApexAndroid?.setSpeakerphone?.(true);
+      } catch {}
+      if (!this.audioEl) {
+        this.audioEl = new Audio();
+        this.audioEl.preload = 'auto';
+        (this.audioEl as any).playsInline = true;
+        this.audioEl.volume = 1.0;
       }
+      if (!this.speakerUnlocked) {
+        const tinySilentWav = AudioEngine.encodeWav16k([new Float32Array(160)]);
+        const url = URL.createObjectURL(new Blob([tinySilentWav], { type: 'audio/wav' }));
+        this.audioEl.src = url;
+        this.audioEl.volume = 0.01;
+        const p = this.audioEl.play();
+        if (p && typeof p.then === 'function') {
+          p.then(() => {
+            this.speakerUnlocked = true;
+            try { URL.revokeObjectURL(url); } catch {}
+          }).catch(() => {
+            try { URL.revokeObjectURL(url); } catch {}
+          });
+        }
+      }
+    } catch {
+      /* audio unlock fail = sirf silence; UI ke buttons kabhi na mare */
     }
   }
 

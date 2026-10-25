@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { apexCopy, apexOpen, apexPaste } from '../engine/nativeUi';
 import { hubFetch } from '../engine/api';
 import { YtPlan, ContentPlan, TopicResearch, WorkflowJob, WorkflowStep } from '../types';
 import { AgentTeamPanel } from './AgentTeamPanel';
@@ -37,6 +38,8 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
   const [workflowStatus, setWorkflowStatus] = useState<WorkflowStep>('idle');
   const [workflowProgress, setWorkflowProgress] = useState(0);
   const [workflowLogs, setWorkflowLogs] = useState<string[]>([]);
+  const [researchBusy, setResearchBusy] = useState(false);
+  const [researchErr, setResearchErr] = useState('');
   const [researchedTopics, setResearchedTopics] = useState<TopicResearch[]>([]);
   const [selectedTopicResearch, setSelectedTopicResearch] = useState<TopicResearch | null>(null);
 
@@ -262,17 +265,37 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
     addLog(`🔍 Researching viral trends in "${targetNiche}"…`);
     setWorkflowStatus('researching');
     setWorkflowProgress(15);
-
-    const r = await hubFetch('/agent/research', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ niche: targetNiche }),
-    });
-    const j = await r.json();
-    const list: TopicResearch[] = j.topics || [];
-    setResearchedTopics(list);
-    addLog(`✓ Uncovered ${list.length} high-potential viral topics`);
-    return list;
+    setResearchBusy(true);
+    setResearchErr('');
+    try {
+      const r = await hubFetch('/agent/research', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ niche: targetNiche }),
+      });
+      const j = await r.json().catch(() => ({}) as Record<string, unknown>);
+      const list: TopicResearch[] = (j.topics as TopicResearch[]) || [];
+      setResearchedTopics(list);
+      addLog(`✓ Uncovered ${list.length} high-potential viral topics`);
+      // 🐞 6.6.12: pehle 0 topics par screen chup-chaap placeholder par ruk jaati thi.
+      if (!list.length) {
+        setResearchErr(
+          r.ok
+            ? 'Topic list khali aayi — niche me ek-do word rakho (jaise "AI tools") aur phir se dabaao.'
+            : `Server ne ${r.status} diya — Worker/R2 setup dekho (CORE panel → 🧪 R2 CHECK).`,
+        );
+      }
+      return list;
+    } catch (e) {
+      const msg = String((e as { message?: string })?.message || e).slice(0, 140);
+      addLog(`⚠️ Research fail: ${msg}`);
+      setWorkflowStatus('idle');
+      setWorkflowProgress(0);
+      setResearchErr(`Research nahi ho paya: ${msg}. Button dabane par hamesha ye message dikhega — chup nahi karega.`);
+      return [];
+    } finally {
+      setResearchBusy(false);
+    }
   };
 
   // 2. Script Formulation
@@ -472,7 +495,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
       a.download = `${(planData.title || 'apex-short').replace(/[^\w\u0900-\u097F -]/g, '').slice(0, 46) || 'apex-short'}.webm`;
       a.click();
       try {
-        await navigator.clipboard.writeText(
+        await apexCopy(
           `${planData.title}\n\n${planData.description}\n\n${(planData.tags || []).map((t) => '#' + t).join(' ')}`
         );
       } catch {}
@@ -586,7 +609,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
     const file = new File([videoBlob], fileName, { type: videoBlob.type });
 
     try {
-      await navigator.clipboard.writeText(
+      await apexCopy(
         `${plan.title}\n\n${plan.description}\n\n${(plan.tags || []).map((t) => '#' + t).join(' ')}`
       );
       onToast('Title & description copied!');
@@ -720,12 +743,12 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
                       onClick={async () => {
                         setShowConnectSteps(true);
                         try {
-                          await navigator.clipboard.writeText(
+                          await apexCopy(
                             'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly'
                           );
                           onToast('✅ Scope automatically copy ho gaya! Ab Google page me Paste karke Authorize dabao.');
                         } catch {}
-                        window.open('https://developers.google.com/oauthplayground/', '_blank', 'noopener,noreferrer');
+                        apexOpen('https://developers.google.com/oauthplayground/');
                       }}
                       className="cursor-pointer px-3.5 py-2 bg-gradient-to-r from-[#d91e36] to-[#ff3b5c] hover:brightness-110 text-white font-extrabold text-xs rounded-lg shadow-[0_0_16px_rgba(255,59,92,0.4)]"
                     >
@@ -764,7 +787,7 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
                       <button
                         onClick={async () => {
                           try {
-                            const clip = (await navigator.clipboard.readText()).trim();
+                            const clip = (await apexPaste()).trim();
                             if (clip) {
                               setAccessToken(clip);
                               const ok = await verifyYouTubeConnection(clip);
@@ -959,14 +982,20 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
                 type="text"
                 value={niche}
                 onChange={(e) => setNiche(e.target.value)}
-                placeholder="Topic niche (e.g. Next-Gen Humanoids, Space Exploration)"
+                placeholder="Niche likho (jaise: AI Tools, Humanoids, Space)"
                 className="flex-1 bg-[#0a151d] border border-[#1d3a4d] rounded-xl p-3 text-xs text-[#eaf9ff]"
               />
               <button
-                onClick={() => performResearch(niche)}
+                onClick={() => {
+                  if (!niche.trim()) {
+                    setResearchErr('Pehle niche likho (ek-do word), phir ye button dabao.');
+                    return;
+                  }
+                  void performResearch(niche.trim());
+                }}
                 className="cursor-pointer bg-gradient-to-r from-[#176282] to-[#2ea8c9] text-[#03181f] px-4 py-2.5 rounded-xl font-bold text-xs"
               >
-                🔍 Research Trends
+                {researchBusy ? '⏳ Dhundh raha hoon…' : '🔍 Trend Dhundho'}
               </button>
             </div>
 
@@ -1030,8 +1059,13 @@ export const YouTubeModal: React.FC<YouTubeModalProps> = ({ isOpen, isOwner = fa
                 ))}
               </div>
             ) : (
-              <div className="p-8 text-center text-xs text-[#527d97] border border-dashed border-[#173042] rounded-xl">
-                Click "Research Trends" to discover automated high-converting video topics with viral metrics.
+              <div className="p-8 text-center text-xs text-[#9fd0e8] border border-dashed border-[#173042] rounded-xl leading-relaxed">
+                Upar niche likh kar <span className="font-bold text-[#eaf9ff]">🔍 Trend Dhundho</span> dabao — 41 agents viral topics + score ke saath list laayenge, aur ye box results se bhar jayega.
+                {researchErr ? (
+                  <div className="mt-3 rounded-lg border border-[rgba(255,120,120,0.4)] bg-[rgba(255,90,90,0.12)] px-3 py-2 text-left text-[11px] font-semibold text-[#ffd7d7]">
+                    ⚠️ {researchErr}
+                  </div>
+                ) : null}
               </div>
             )}
           </div>

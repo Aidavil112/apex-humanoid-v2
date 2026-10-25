@@ -29,3 +29,7 @@ twa/*.aab
 twa/*.apk
 twa/*.log
 .bubblewrap/
+
+# 🧪 jsdom test harness output (local only)
+tools/.bundle.mjs
+.harness-entry.tsx

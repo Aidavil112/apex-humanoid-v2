@@ -26,6 +26,85 @@ const jsonRes = (obj, status = 200) =>
     headers: { 'content-type': 'application/json; charset=utf-8', ...CORS_HEADERS },
   });
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🪣 R2 PUBLIC ASSET PROXY — /asset/<key>  (Cloudflare R2 = ₹0, 10 GB free, 0 egress)
+//    App bucket me presigned PUT se video daalta hai; Meta ko ek public URL chahiye —
+//    wo ye workers.dev link hai (r2.dev public URL na bhi ho to chalega).
+//    Secrets: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_ACCOUNT_HOST (ya R2_ENDPOINT)
+// ─────────────────────────────────────────────────────────────────────────────
+const R2_ALLOWED_EXT = /\.(mp4|m4v|mov|webm|mkv|mp3|m4a|aac|wav|jpg|jpeg|png|webp|gif|json|txt|vtt|srt)$/i;
+const R2_HEX = (buf) => Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+
+async function r2Sha256Hex(data) {
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
+  return R2_HEX(await crypto.subtle.digest('SHA-256', bytes));
+}
+
+async function r2Hmac(keyBytes, message) {
+  const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message)));
+}
+
+function r2Enc(s) {
+  return encodeURIComponent(String(s)).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function r2CanonUri(path) {
+  return String(path || '/').split('/').map((seg) => r2Enc(seg)).join('/');
+}
+
+/** AWS Signature V4 (region auto, service s3) — R2/S3 ke liye. */
+async function r2Sign({ method, host, path, query, headers, payloadHash, accessKeyId, secretAccessKey, amzDate: fixedDate }) {
+  const now = new Date().toISOString().replace(/[-:]|\.\d{3}/g, '');
+  // fixedDate sirf tests/debug ke liye (signature date-dependent hota hai)
+  const amzDate = fixedDate || now.slice(0, 8) + 'T' + now.slice(9, 15) + 'Z';
+  const dateStamp = amzDate.slice(0, 8);
+  const scope = `${dateStamp}/auto/s3/aws4_request`;
+  const all = { host, ...Object.fromEntries(Object.entries(headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)])), 'x-amz-date': amzDate, 'x-amz-content-sha256': payloadHash };
+  const names = Object.keys(all).sort();
+  const canonHeaders = names.map((n) => `${n}:${String(all[n]).replace(/ {2,}/g, ' ').trim()}\n`).join('');
+  const signedHeaders = names.join(';');
+  const cQuery = Object.keys(query || {}).sort().map((k) => `${r2Enc(k)}=${r2Enc(query[k] === undefined ? '' : query[k])}`).join('&');
+  const creq = [method, r2CanonUri(path), cQuery, canonHeaders, signedHeaders, payloadHash].join('\n');
+  const sts = `AWS4-HMAC-SHA256\n${amzDate}\n${scope}\n${await r2Sha256Hex(creq)}`;
+  let k = new TextEncoder().encode(`AWS4${secretAccessKey}`);
+  for (const part of [dateStamp, 'auto', 's3', 'aws4_request']) k = await r2Hmac(k, part);
+  const signature = R2_HEX(await r2Hmac(k, sts));
+  return {
+    authorization: `AWS4-HMAC-SHA256 Credential=${accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    amzDate,
+    payloadHash,
+  };
+}
+
+function r2HostFromEnv(env) {
+  const raw = String(env.R2_ACCOUNT_HOST || env.R2_ENDPOINT || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!raw) return '';
+  if (/^[0-9a-f]{32}$/i.test(raw)) return `${raw}.r2.cloudflarestorage.com`;
+  return raw;
+}
+
+async function r2ObjectRequest(env, key, method = 'GET') {
+  const host = r2HostFromEnv(env);
+  const bucket = String(env.R2_BUCKET || 'apex').replace(/^\/+/g, '');
+  const path = `/${bucket}/${String(key).replace(/^\/+/, '')}`;
+  const signed = await r2Sign({
+    method,
+    host,
+    path,
+    payloadHash: await r2Sha256Hex(''),
+    accessKeyId: env.R2_ACCESS_KEY_ID,
+    secretAccessKey: env.R2_SECRET_ACCESS_KEY,
+  });
+  const res = await fetch(`https://${host}${r2CanonUri(path)}`, {
+    method,
+    headers: { authorization: signed.authorization, 'x-amz-date': signed.amzDate, 'x-amz-content-sha256': signed.payloadHash },
+    redirect: 'follow',
+  });
+  return { res, path };
+}
+
 const HELP = `<b>APEX Humanoid 🤖</b>
 
 Kuch bhi likho — AI turant jawab dega!
@@ -1516,8 +1595,29 @@ async function jarvisNightShift(env) {
   return { ran: true, replied, read, note: st.lastNote };
 }
 
+// 🔌 v6.6.14 KV-BINDING ALIAS (ek hi kaam, do naam): Cloudflare dashboard binding add karte
+//    waqt default Variable name "KV_BINDING" bhar deta hai — aapke screenshot me wahi tha —
+//    aur worker `env.APEX_KV` maangta hai, isliye "/jarvis/brain → APEX_KV binding missing"
+//    aa raha tha. Ab worker entry par alias ban jaata hai, to **APEX_KV ya KV_BINDING ya
+//    APEX_KV_NS ya KV — jo naam ho chalega**. (Scope-safe: sirf entry par, 27 uses nahi chhue.)
+function withKVAlias(env) {
+  if (!env || env.APEX_KV) return env;
+  const alt = env.KV_BINDING || env.APEX_KV_NS || env.KV || null;
+  if (!alt) return env;
+  try {
+    env.APEX_KV = alt;
+    // Frozen/readonly env ho to assignment chup-chaap fail ho jaata hai (non-strict me),
+    // isliye verify karke hi return karo — varna naya object banao.
+    if (env.APEX_KV) return env;
+  } catch {
+    /* read-only object — neeche spread wale raaste chalo */
+  }
+  return { ...env, APEX_KV: alt };
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
+    env = withKVAlias(env);
     const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') {
@@ -1559,6 +1659,37 @@ export default {
       );
     }
 
+    // ---- 🪣 /asset/<key> — R2 ka public padhne layaq roop (IG/Meta is link ko fetch karta hai) ----
+    if (url.pathname.startsWith('/asset/')) {
+      const key = decodeURIComponent(url.pathname.slice('/asset/'.length)).replace(/\/\.\./g, '/');
+      if (!R2_ALLOWED_EXT.test(key)) return jsonRes({ ok: false, error: 'only media/json/txt keys allowed' }, 403);
+      if (!env.R2_ACCESS_KEY_ID || !env.R2_SECRET_ACCESS_KEY || !r2HostFromEnv(env)) {
+        return jsonRes(
+          {
+            ok: false,
+            error: 'R2 secrets missing — npx wrangler secret put R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_ACCOUNT_HOST',
+          },
+          503
+        );
+      }
+      const headCall = url.searchParams.get('meta') === '1';
+      try {
+        const { res } = await r2ObjectRequest(env, key, headCall ? 'HEAD' : 'GET');
+        if (!res.ok) return jsonRes({ ok: false, error: `R2 ${res.status}`, key }, res.status === 404 ? 404 : 502);
+        const h = new Headers();
+        for (const [k, v] of res.headers.entries()) {
+          if (['content-type', 'content-length', 'last-modified', 'etag', 'cache-control'].includes(k)) h.set(k, v);
+        }
+        h.set('access-control-allow-origin', '*');
+        h.set('cache-control', 'public, max-age=31536000, immutable');
+        h.set('x-robots-tag', 'noindex, nofollow');
+        if (headCall) return new Response(null, { status: 200, headers: h });
+        return new Response(res.body, { status: 200, headers: h });
+      } catch (e) {
+        return jsonRes({ ok: false, error: String((e && e.message) || e).slice(0, 200), key }, 502);
+      }
+    }
+
     if (url.pathname === '/health') {
       if (url.searchParams.get('ping_ai') === '1') {
         const t0 = Date.now();
@@ -1579,6 +1710,8 @@ export default {
         youtubeUploadAuth: !!(env.YOUTUBE_REFRESH_TOKEN || env.YOUTUBE_ACCESS_TOKEN),
         youtubeStudioReady: true,
         brainReady: true,
+        // 🪣 R2 proxy — ye asli check hai (secrets bina /asset/ 503 dega)
+        r2ProxyReady: !!(env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY && r2HostFromEnv(env) && env.R2_BUCKET),
       });
     }
 
@@ -2852,7 +2985,7 @@ async function handleBrainFile(request, url, env) {
     const got = String(request.headers.get('x-apex-brain') || url.searchParams.get('key') || '');
     if (got !== String(env.APEX_BRAIN_KEY)) return jsonRes({ ok: false, error: 'bad_brain_key' }, 403);
   }
-  if (!env.APEX_KV) return jsonRes({ ok: false, error: 'APEX_KV binding missing (wrangler.toml me namespace add karo)' }, 200);
+  if (!env.APEX_KV) return jsonRes({ ok: false, error: 'KV binding nahi mila — Worker → Settings → Bindings → Add → KV namespace → Variable name: APEX_KV (ya KV_BINDING) → Save and Deploy' }, 200);
 
   if (request.method === 'GET') {
     const markdown = await loadBrainMarkdown(env);
@@ -3187,6 +3320,7 @@ async function handleBrainFile(request, url, env) {
   },
 
   async scheduled(_event, env, ctx) {
+    env = withKVAlias(env);
     ctx.waitUntil(
       (async () => {
         if (env.APEX_KV) {

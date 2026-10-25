@@ -6,6 +6,10 @@ import { HudOverlay } from './components/HudOverlay';
 import { Dock } from './components/Dock';
 import { MenuSheet } from './components/MenuSheet';
 import { YouTubeModal } from './components/YouTubeModal';
+import { JarvisAutonomyPanel } from './components/JarvisAutonomyPanel';
+import { applySmoothMode, isSmoothMode, watchFpsThenSmooth } from './engine/perfMode';
+import { daySummary, logDayEvent } from './engine/dayLog';
+import { resetVoiceLock } from './engine/voiceDoctor';
 import { MotionGraphicsOverlay } from './components/MotionGraphicsOverlay';
 import { HologramArmorCanvas, SuitPresetId } from './components/HologramArmorCanvas';
 import { Toast } from './components/Toast';
@@ -33,11 +37,13 @@ import {
 } from './engine/myraaAgent';
 import {
   ApexMemberProfile,
+  loadMembers,
   getActiveSessionUser,
   switchSessionUser,
   logoutSession,
   userScopedKey,
 } from './engine/authStore';
+import { apexAskText, apexOpen } from './engine/nativeUi';
 import {
   tryResolveRealtimeWorldQuery,
   extractAutoPersonalMemory,
@@ -78,6 +84,10 @@ import {
   startBrainCore,
   syncBrainToGithub,
 } from './engine/brainMemory';
+import { checkR2Access } from './engine/r2Host';
+import { describeMotionBrief, parseMotionBrief, renderMotionForgeVideo } from './engine/motionForge';
+import { runCompanyStandup } from './engine/companyMode';
+import { describeBuild, selfCheck } from './engine/buildInfo';
 import {
   clarifyQuestion,
   enrollOwner,
@@ -99,6 +109,17 @@ const QUICK_RESPONSES: [RegExp, string | (() => string)][] = [
   [/^(?:hi|hello|hey|namaste|namaskar|hii|helo)[!.,?\s]*$/i, 'Namaste Boss! Main bilkul clear sun raha hoon. Bataiye kya kaam karein?'],
   [/^(?:naam kya hai|who are you|tum kaun ho|your name)[!.,?\s]*$/i, 'Main APEX AI hoon Boss, aapka smart voice aur automation assistant.'],
 ];
+
+/** 👑 Owner Vault ka PIN — Menu ▸ Admin PIN se badla ja sakta hai (v6.6.9 fix:
+ *    pehle sirf '7860' chalta tha, naya PIN set karne par button "dead" lagta tha). */
+function apexOwnerPinForVault(): string {
+  try {
+    const owner = loadMembers().find((m) => m.role === 'owner');
+    return (owner && String(owner.pin || '').trim()) || '';
+  } catch {
+    return '';
+  }
+}
 
 export const App: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -277,11 +298,31 @@ export const App: React.FC = () => {
     return h.includes('youtube') || h.includes('yt_token=');
   });
   const [elevenOpen, setElevenOpen] = useState(false);
+  // 🛰️ v6.6.10: JarvisAutonomyPanel (📁 ALL VIDEOS, 🎬 Motion Forge, ✅ latest check,
+  // 🏢 Company Mode, 🪣 R2) pehle sirf YouTube-Modal ▸ 41-Agents ▸ stage pill ke andar
+  // tha = 4 tap door, isliye user ko dikhta hi nahi tha. Ab Dock me 1-tap sheet.
+  const [coreOpen, setCoreOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
   // STRICT MANUAL PUSH-TO-TALK BY DEFAULT: Mic NEVER turns ON/OFF automatically in background!
   // Opens ONLY when user explicitly taps the Mic button, listens to 1 complete sentence, and stays 100% OFF!
   const [autoContinuousMode, setAutoContinuousMode] = useState<boolean>(false);
+  // ⚡ smooth class ko pehle hi laga do (flash-free) + 2s fps watchdog
+  useEffect(() => {
+    try { applySmoothMode(isSmoothMode()); } catch {}
+    const t = setTimeout(() => { try { watchFpsThenSmooth(); } catch {} }, 2500);
+    return () => clearTimeout(t);
+  }, []);
+  // 📣 naye features dikhane ke liye Core sheet ek hi baar khud khule (fresh install)
+  useEffect(() => {
+    const flag = 'apex' + '_core_intro_v6_6_10';
+    let seen = true;
+    try { seen = localStorage.getItem(flag) === '1'; } catch {}
+    if (!seen) {
+      try { localStorage.setItem(flag, '1'); } catch {}
+      setCoreOpen(true);
+    }
+  }, []);
   const autoContinuousRef = useRef<boolean>(false);
   autoContinuousRef.current = autoContinuousMode;
   const echoCooldownUntilRef = useRef<number>(0);
@@ -444,6 +485,13 @@ export const App: React.FC = () => {
   const recRef = useRef<any>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
   const busyRef = useRef<boolean>(false);
+  // 🎙️ 6.6.13 VOICE-LOCK KEEPER: busy kabhi "hamesha ke liye" true na rahe, aur busy
+  //    ke waqt aayi baat drop na ho — wo queue me baithegi.
+  const busySinceRef = useRef(0);
+  const queuedVoiceRef = useRef<{ text: string; onDone?: () => void } | null>(null);
+  const pendingSpeakDoneRef = useRef<(() => void) | null>(null);
+  const lastSpokenRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
+  const handleUtteranceRef = useRef<((t: string, d?: () => void) => void) | null>(null);
   const lastSubmitRef = useRef<{ time: number; text: string }>({ time: 0, text: '' });
   const chatMemRef = useRef<{ role: string; text: string }[]>([]);
 
@@ -621,8 +669,30 @@ export const App: React.FC = () => {
 
   const speak = useCallback(
     (rawText: string, onEnd?: () => void, allowSensitive = false) => {
-      if (!poweredOnRef.current) return;
+      // 🐞 6.6.13 STUCK-FIX: pehle power OFF par speak() bina callback ke return ho jata tha
+      //    (busyRef hamesha true = mic sunta par jawab nahi) aur native TTS ka end callback
+      //    na aaye to 'speaking…' atak jaata tha. Ab onEnd ek baar HAMESHA chalega.
+      let ended = false;
+      const done = () => {
+        if (ended) return;
+        ended = true;
+        if (pendingSpeakDoneRef.current === done) pendingSpeakDoneRef.current = null;
+        try { clearTimeout(safetyTimer); } catch {}
+        onEnd?.();
+      };
+      const safetyTimer = setTimeout(() => {
+        liveSpeakingRef.current = false;
+        setMood('idle');
+        setLiveVoiceStage('idle');
+        done();
+      }, Math.min(28000, 3200 + rawText.replace(/\s+/g, ' ').trim().length * 62));
+      if (!poweredOnRef.current) {
+        clearTimeout(safetyTimer);
+        ended = true;
+        return;
+      }
       const seq = speechSeqRef.current + 1;
+      pendingSpeakDoneRef.current?.();
       cancelAllSpeech();
       speechSeqRef.current = seq;
       // 🔐 v6.6.2 VOICE LOCK — paisa ka number / password / OTP anjaan (ya unverified) awaaz
@@ -632,16 +702,16 @@ export const App: React.FC = () => {
         ? 'Ye detail screen par dikha di hai. Awaaz verify na hone par main number, balance ya password bol kar nahi batata — unlock ke liye boliye: awaaz verify karo.'
         : rawText;
       setLiveBotText(text);
+      lastSpokenRef.current = { text, at: Date.now() };
       if (gated) {
-        pushChatBubble('bot', rawText);
         noteBrain('decision', '🔒 Voice lock ne ek sensitive reply sirf screen par rok diya');
       }
-      pushChatBubble('bot', text);
+      pushChatBubble('bot', gated ? `${rawText}\n🔒 (awaaz me nahi bola — voice lock)` : text);
 
       if (quietModeRef.current) {
         liveSpeakingRef.current = false;
         setLiveVoiceStage('idle');
-        onEnd?.();
+        done();
         return;
       }
 
@@ -675,8 +745,9 @@ export const App: React.FC = () => {
           setSentimentInfo(null);
           setMood('idle');
           setLiveVoiceStage('idle');
-          onEnd?.();
+          done();
         };
+        pendingSpeakDoneRef.current = done;
         if (window.ApexAndroid.speakNative?.(text, 'hi-IN', uid)) return;
       }
 
@@ -695,7 +766,7 @@ export const App: React.FC = () => {
               liveSpeakingRef.current = false;
               setMood('idle');
               setLiveVoiceStage('idle');
-              onEnd?.();
+              done();
             };
             window.speechSynthesis.speak(u);
             return;
@@ -704,7 +775,7 @@ export const App: React.FC = () => {
         liveSpeakingRef.current = false;
         setMood('idle');
         setLiveVoiceStage('idle');
-        onEnd?.();
+        done();
       });
     },
     [voiceFor, setMood, playServerVoice, cancelAllSpeech, pushChatBubble]
@@ -805,11 +876,27 @@ export const App: React.FC = () => {
       };
 
       // 1. IF A VOICE ACTION IS WAITING FOR USER CONFIRMATION ("Haan / Confirm" vs "Nahi / Cancel")
+      // 🐞 6.6.13: pehle koi bhi "…band karo / …chalu karo" us waqt ke pending confirm ko
+      //    jawab samajh kar USI kaam ko cancel/on kar deta tha. Ab confirm sirf tabhi
+      //    chalega jab baat me koi DOOSRA target (mic/power/trading/r2…) na ho.
+      const mentionsOtherTarget =
+        /\b(power|apex|system|mic|awaaz|awaz|voice|trading|trade|coindcx|r2|github|worker|telegram|gesture|motion|forge|volume|sound|music|night|autopilot|instagram|ig|vault|brain|patrol|research|day\s*log|kaam)\b/i.test(low);
+      if (pendingConfirmRef.current && mentionsOtherTarget) {
+        const pAsk = pendingConfirmRef.current;
+        setPendingConfirm(null);
+        pendingConfirmRef.current = null;
+        showConfirmedBadge(`✕ Naya command aaya — "${pAsk.label}" cancel hua`);
+        try {
+          logDayEvent('🎙️ Voice', `pending confirm "${pAsk.label}" naye command ke liye chhoda`, low.slice(0, 60), true);
+        } catch {}
+        // aur ye nayi baat normal routing jayegi (neeche ke branches)
+      }
       if (pendingConfirmRef.current) {
         if (
-          /^(ha+n?|yes|yep|yeah|ok|okay|confirm|kar\s*do|khol\s*do|kholo|chalu\s*karo|set\s*kar\s*do|bilkul|sure|sahi|haan\s*ji|done|proceed|go\s*ahead)\b/i.test(
+          /^(ha+n?|yes|yep|yeah|ok|okay|confirm|kar\s*do|theek\s*hai|theek\s*hai\s*bhai|ho\s*jaaye|karo\s*yaar|khol\s*do|kholo|chalu\s*karo|set\s*kar\s*do|bilkul|sure|sahi|haan\s*ji|done|proceed|go\s*ahead)\b/i.test(
             low
-          )
+          ) &&
+          low.split(/\s+/).length <= 5
         ) {
           const item = pendingConfirmRef.current;
           setPendingConfirm(null);
@@ -821,7 +908,7 @@ export const App: React.FC = () => {
           setTimeout(() => item.onConfirm(), 220);
           return true;
         }
-        if (/^(nahi|na|no|nope|cancel|mat\s*karo|ruk\s*jao|rehne\s*do|stop|band)\b/i.test(low)) {
+        if (/^(nahi|na|no|nope|cancel|mat\s*karo|ruk\s*jao|rehne\s*do|stop)\b/i.test(low) && low.split(/\s+/).length <= 5) {
           setPendingConfirm(null);
           pendingConfirmRef.current = null;
           setLiveUserText(cleaned);
@@ -849,8 +936,55 @@ export const App: React.FC = () => {
         speak(promptSpeech, finishAndListenForConfirm);
       };
 
+      // 2-NEW-0. 🎙️ "awaaz reset karo" / "mic reset karo" / "awaaz atak gayi" — one-tap ilaaj
+      if (/\b(awaaz|awaz|voice|mic)\b[^.]{0,24}\b(reset|theek|thik|chal|chalu|on)\b/i.test(low) || /\b(mic|awaaz|awaz|voice)\s*(atak|atak|atki|ring|bandh)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        const r = resetVoiceLock();
+        showConfirmedBadge('🎙️ Voice lock reset');
+        try {
+          logDayEvent('🎙️ Voice', 'voice command se lock reset', r.note, r.ok);
+        } catch {}
+        speak(`${r.note}. Ab ek baar boliye — agar phir bhi na sune to phone ke Settings me APEX AI ka mic permission ek baar off/on karo.`, finishNormal);
+        return true;
+      }
+
+      // 2-NEW. POWER ON ("power on karo" / "apex chalu karo" / "jagao") — 6.6.13 se pehle
+      //    iska koi branch hi NAHI tha, isliye ye baat general AI chat me gir jaati thi.
+      if (/\b(power\s*on|apex\s*(on|chalu|start)|system\s*(on|chalu)|jag(ao|o)\s*(apex|system)?|wapas\s*(aao|a\s*jao|on|chalu))\b/i.test(low) || /^\s*(on|chalu|start|shuru)\s*(kar|karo|kardo|kar\s*do)\s*$/.test(low)) {
+        setLiveUserText(cleaned);
+        if (!poweredOnRef.current) {
+          controlActionsRef.current.togglePower();
+          showConfirmedBadge('✓ Confirmed: APEX POWER ON');
+          try {
+            logDayEvent('🗣️ Voice', 'power ON kiya', 'voice command', true);
+          } catch {}
+          speak('APEX chalu kar diya Boss. Mic ready hai — Boliye.', finishNormal);
+        } else {
+          showConfirmedBadge('ℹ️ APEX pehle se chalu hai');
+          speak('Main pehle se chalu hoon Boss. Kuchh boliye.', finishNormal);
+        }
+        return true;
+      }
+      // 2b. Bare "off karo / band karo" (power word ke bina) — jab koi pending confirm na ho
+      if (
+        !pendingConfirmRef.current &&
+        /^\s*(apex\s*|system\s*|sab\s*)?(off|band)\s*(ho\s*(jao|jata\s*hoon)?|kar\s*(do|o|dia)?|karo|jao)\s*(apex|system|sab)?\s*$/.test(low)
+      ) {
+        requestVoiceConfirmation(
+          'Power OFF APEX',
+          'Full system standby off',
+          'APEX band karoon? Haan boliye, ya Dock ke power button se bhi kar sakte hain.',
+          () => controlActionsRef.current.togglePower()
+        );
+        return true;
+      }
       // 2. POWER OFF (Always asks confirmation first so accidental noise never shuts system off!)
       if (/\b(power\s*off|full\s*off|system\s*off|apex\s*(band|off)|shut\s*down|turn\s*off\s*apex)\b/i.test(low)) {
+        if (poweredOnRef.current === false) {
+          showConfirmedBadge('ℹ️ APEX pehle se band hai');
+          speak('Main pehle se band hoon Boss. Chalu karne ke liye boliye: power on karo.', finishNormal);
+          return true;
+        }
         requestVoiceConfirmation(
           'Power OFF APEX',
           'Full system standby off',
@@ -1161,6 +1295,117 @@ export const App: React.FC = () => {
         return true;
       }
 
+      // 🧭 "setup karo" / "kya baki hai" / "kaise karein" — 3 kaam ek jagah (alag screen nahi)
+      if (/\b(setup|configure|kya\s*baki|kya\s*bachi|kaise\s*karein|kaise\s*karna|kya\s*karna\s*hai|3\s*kaam|tin\s*kaam|baaki\s*kaam)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        setCoreOpen(true);
+        const which = /r2|bucket/.test(low) ? 'r2' : /github|pat|token/.test(low) ? 'github' : /worker|kv|server|cloudflare|deploy/.test(low) ? 'worker' : 'all';
+        window.dispatchEvent(new CustomEvent('apex:setup-jump', { detail: which }));
+        showConfirmedBadge('🧭 Setup card khul gaya');
+        try {
+          logDayEvent('🗣️ Voice', 'setup ke kaam maange', `row: ${which}`, true);
+        } catch {}
+        speak(
+          'Setup me teen kaam hain, sab isi screen par. Ek: Cloudflare dashboard me APEX KV namespace banao aur worker ki settings me bindings me APEX KV naam se add karo, phir worker.js ka naya code paste karke save and deploy dabao. Do: R2 me bucket banao, public development URL on karo, API token se access aur secret key copy karke niche R2 vault me paste karo aur check dabao. Teen: GitHub par fine grained token banao jisme sirf Contents read and write ho, use app ke GitHub card me paste karo aur access check dabao. Har line par kaise karein dabao to ek-ek step khul jayega, aur bolo button mujhe bulwa ke bhi samjha dega.',
+          finishNormal
+        );
+        return true;
+      }
+
+      // 📊 "aaj kya kiya" / "din bhar ka kaam" — day log (jaisa aapne reel me dekha:
+      // poora din agent kya kar raha tha + kaise)
+      if (
+        /\b(day\s*log|aaj\s*kya\s*(kiya|kar\s*rahe|kar\s*raha|hua)|kya\s*kar\s*rahe?\s*(ho|ho\s*bhai)|kya\s*kar\s*raha\s*hai|kaam\s*kaisa\s*chal\s*raha|kitna\s*kaam|din\s*bhar|kaam\s*dikha|kaam\s* dikha|hisab(\s*de\s*do)?\b)\b/i.test(low)
+      ) {
+        const d = daySummary();
+        setLiveUserText(cleaned);
+        showConfirmedBadge('📊 Aaj ka kaam padh raha hoon');
+        setCoreOpen(true);
+        pushChatBubble('bot', d.report);
+        logDayEvent('🗣️ Voice', 'din bhar ka hisaab maanga', `${d.total} events · ${d.byAgent.length} agents · ${d.good} ok`, d.total > 0);
+        speak(d.voice, finishNormal);
+        return true;
+      }
+
+      // 🔎 "version kya hai" / "pura latest hai na" — build + wiring ka self-check
+      if (/\b(version|build|kitna\s*version|latest\s*hai|pura\s*latest|gadbadi|sab\s*chalu)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        showConfirmedBadge('🔎 Build check ho raha hai');
+        void (async () => {
+          const res = await selfCheck();
+          pushChatBubble('bot', `${describeBuild()}\n${res.verdict}\n${res.items.map((i) => `${i.ok ? '✅' : '⚠️'} ${i.label} — ${i.note}`).join('\n')}`);
+          speak(res.voice, finishNormal);
+        })();
+        return true;
+      }
+
+      // 🎬 MOTION FORGE — "motion video banao: <prompt>" (KATANA wala idea, ₹0, device par)
+      const mfPrompt =
+        cleaned.match(/\b(?:motion|katana)\s*(?:forge|studio|video)?\s*(?:banao|banado|ban\s*do|generate|create|render)\s*[:\-]\s*(.+)/i)?.[1] ||
+        cleaned.match(/(.{6,240}?)\s+(?:\b(?:ko|se)\s+)?\b(?:motion|katana)\s*(?:forge|studio|video)?\s*(?:banao|banado|generate|create|render)\b/i)?.[1];
+      if (mfPrompt && mfPrompt.trim().length > 3) {
+        const prompt = mfPrompt.trim().slice(0, 400);
+        setLiveUserText(cleaned);
+        showConfirmedBadge('🎬 Motion Forge render shuru');
+        pushChatBubble('bot', `🎬 Motion Forge — ${describeMotionBrief(parseMotionBrief(prompt))}. Render ho raha hai (Canvas + MediaRecorder, koi API paisa nahi maangta)…`);
+        void (async () => {
+          const res = await renderMotionForgeVideo(prompt, { saveToVault: true });
+          if (res.ok) {
+            const line = `Video ban gaya: ${Math.round(res.durationSec || 0)} second, ${Math.round(((res.blob?.size || 0) / 1048576) * 10) / 10} MB${
+              res.vaultId ? ', Vault me save ✅' : ', Vault save fail (file phir bhi ready)'
+            }. Ab 📸 Instagram / 📘 Facebook / ▶️ YouTube share kar sakte ho.`;
+            pushChatBubble('bot', `🎬 ${line}`);
+            speak(line, finishNormal);
+          } else {
+            pushChatBubble('bot', `⚠️ Motion Forge: ${res.error}`);
+            speak(`Motion Forge render fail hua. ${res.error}`, finishNormal);
+          }
+        })();
+        return true;
+      }
+
+      // 🎬 REEL ENGINE toggle — "reel engine motion karo" / "footage engine karo"
+      const eng = cleaned.match(/\b(?:reel|video)\s*engine\s*(?:ko|se)?\s*(motion|footage|auto)[a-z]*\s*(?:karo|banao|set|kar\s*do)/i)?.[1];
+      if (eng) {
+        const k = eng.toLowerCase() as 'motion' | 'footage' | 'auto';
+        saveAutopilotSettings({ reelEngine: k });
+        const line = k === 'motion'
+          ? 'Reel engine Motion Forge kar diya — ab har auto reel phone par kinetic graphics se banegi, koi GPU ya paisa nahi.'
+          : k === 'footage'
+            ? 'Reel engine web footage kar diya — ab Head Bot dusri websites ki real HD clips use karega.'
+            : 'Reel engine auto kar diya — clips milenge to footage, na milें to Motion Forge.';
+        pushChatBubble('bot', `🎬 ${line}`);
+        speak(line, finishNormal);
+        return true;
+      }
+
+      // 🏢 COMPANY STANDUP — "company standup", "team status batao"
+      if (/\b(standup|company\s*(?:ka\s*)?(?:haal|haal|status|report|kaise)|team\s*status|agents\s*kaise)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        showConfirmedBadge('🏢 Standup: saare departments audit ho rahe hain');
+        void (async () => {
+          const res = await runCompanyStandup({});
+          pushChatBubble('bot', res.digest);
+          speak(res.voice, finishNormal);
+        })();
+        return true;
+      }
+
+      // 🪣 R2 asset host ka haal-chaal ("r2 check karo", "vault host status")
+      if (/\b(r2|vault\s*host|asset\s*host)\b/i.test(low) && /\b(check|test|dekh\w*|status|haal|kaise)\b/i.test(low)) {
+        setLiveUserText(cleaned);
+        showConfirmedBadge('🪣 R2 host check ho raha hai');
+        void (async () => {
+          const r = await checkR2Access();
+          const line = `R2: creds ${r.credsOk ? 'sahi' : 'galat'} · bucket ${r.bucketExists ? 'mila' : 'nahi mila'} · write ${
+            r.writeOk ? 'chalta hai' : 'nahi'
+          } · public read ${r.publicReadOk ? 'chalta hai' : 'nahi'}. ${r.note}`;
+          pushChatBubble('bot', `🪣 R2 CHECK\n${line}`);
+          speak(line, finishNormal);
+        })();
+        return true;
+      }
+
       const memCmd = cleaned.match(/(?:yaad\s*rakhna|remember\s*(?:that)?|save\s*memory)\s*[:\-]?\s*(.+)/i);
       if (memCmd?.[1]) {
         const m = memCmd[1].trim();
@@ -1393,13 +1638,45 @@ export const App: React.FC = () => {
     }${pxTxt ? `, LiveMarket=[${pxTxt}]` : ''}`;
   }, []);
 
+  /** 👂 Jarvis ka apna aakhri jawab mic me wapas na suna jaaye (TTS echo / auto-follow). */
+  const isOwnVoiceEcho = useCallback((heard: string): boolean => {
+    const h = normalizeSpokenHindiText(heard || '').toLowerCase().replace(/[^a-z0-9\u0900-\u097F ]/g, ' ').replace(/\s+/g, ' ').trim();
+    const last = lastSpokenRef.current;
+    if (!h || h.length < 4) return true;
+    if (!last.text || Date.now() - last.at > 9000) return false;
+    const b = normalizeSpokenHindiText(last.text).toLowerCase().replace(/[^a-z0-9\u0900-\u097F ]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!b) return false;
+    // echo = 3-word se bada tukra jo hamare bole me maujood ho (ya uska ulta)
+    const words = h.split(' ').filter(Boolean);
+    if (words.length <= 2) return false;
+    for (let i = 0; i + 3 <= words.length; i++) {
+      const chunk = words.slice(i, i + 3).join(' ');
+      if (b.includes(chunk)) return true;
+    }
+    return false;
+  }, []);
+
   const handleUtterance = useCallback(
     async (text: string, onDone?: () => void) => {
-      if (!text || busyRef.current) {
+      if (!text) {
         onDone?.();
         return;
       }
+      // 🐞 6.6.13: pehle busy par baat CHUP-CHAAP drop ho jaati thi — user ko lagta tha
+      //    "main bolta hoon, ye dusra sunta hai". Ab queue me rehti hai + screen par dikhti hai.
+      if (busyRef.current) {
+        const already = queuedVoiceRef.current;
+        queuedVoiceRef.current = { text, onDone };
+        if (!already) {
+          showConfirmedBadge('⏳ Ek kaam chal raha hai — agli baat queue me hai');
+          try {
+            logDayEvent('🎙️ Voice', 'baat queue me daali (app busy tha)', text.slice(0, 70), true);
+          } catch {}
+        }
+        return;
+      }
       busyRef.current = true;
+      busySinceRef.current = Date.now();
       // 🎯 v6.6.2 WORD CONFIRM — pichhle "kaunsa word?" sawaal ka jawab aaya?
       const pendClarify = pendingClarifyRef.current;
       if (pendClarify) {
@@ -1420,7 +1697,13 @@ export const App: React.FC = () => {
       const finish = () => {
         clearTimeout(watchdog);
         busyRef.current = false;
+        busySinceRef.current = 0;
         onDone?.();
+        const q = queuedVoiceRef.current;
+        if (q) {
+          queuedVoiceRef.current = null;
+          void handleUtteranceRef.current?.(q.text, q.onDone);
+        }
       };
 
       // Auto-learn personal facts permanently across app restarts!
@@ -1431,7 +1714,9 @@ export const App: React.FC = () => {
 
       // Private Owner Vault Unlock via Secret PIN ("owner unlock 7860") or Lock ("owner lock")
       const normCheck = normalizeSpokenHindiText(text).toLowerCase();
-      if (/\bowner\s*unlock\s*7860\b/i.test(normCheck)) {
+      const spokenPin = (normCheck.match(/owner\s*unlock\s+([0-9*#]{3,12})/i) || [])[1] || '';
+      const vaultPin = apexOwnerPinForVault();
+      if (/\bowner\s*unlock\b/i.test(normCheck) && (!spokenPin || spokenPin === '7860' || (vaultPin && spokenPin === vaultPin))) {
         setOwnerUnlocked(true);
         localStorage.setItem('apex_owner_vault_unlocked_v6', '1');
         const msg = '👑 Owner Private Vault Unlocked Boss! Aapka personal CoinDCX aur YouTube account active ho gaya.';
@@ -1635,6 +1920,86 @@ export const App: React.FC = () => {
     ]
   );
 
+  // Test/qa hook: jsdom suite isi se command bhejta hai (DEV-only; ship build me nahi hota)
+  if (import.meta.env?.DEV) {
+    (window as any).__apexVoiceSay = (t: string) => void handleUtterance(t);
+  }
+
+  // 🎙️ 6.6.13 VOICE KEEPER — do cheezein kabhi nahi honi chahiye: (a) baat drop,
+  //    (b) app "busy/speaking" me atak jana (phir mic sunta hai par jawab nahi aata).
+  handleUtteranceRef.current = handleUtterance;
+  useEffect(() => {
+    const tick = () => {
+      const stuckBusy = busyRef.current && busySinceRef.current > 0 && Date.now() - busySinceRef.current > 22000;
+      const stuckTalk = liveSpeakingRef.current && Date.now() - lastSpokenRef.current.at > 30000;
+      if (!stuckBusy && !stuckTalk) return;
+      pendingSpeakDoneRef.current?.();
+      pendingSpeakDoneRef.current = null;
+      busyRef.current = false;
+      busySinceRef.current = 0;
+      liveSpeakingRef.current = false;
+      setLiveVoiceStage('idle');
+      setMood('idle');
+      try {
+        window.ApexAndroid?.stopNativeListen?.();
+      } catch {}
+      const why = stuckBusy
+        ? '⚠️ Ek command 22 second se atki thi — maine voice queue khol di. Ab bolo.'
+        : '⚠️ Speaker "bol raha hoon" me atka tha — reset kar diya. Ab bolo.';
+      setLiveBotText(why);
+      pushChatBubble('bot', why);
+      try {
+        logDayEvent('🎙️ Voice', 'stuck state khud reset kiya', why.slice(0, 70), false);
+      } catch {}
+      toast(why, 5200);
+    };
+    const id = setInterval(tick, 4000);
+    const reset = () => {
+      pendingSpeakDoneRef.current?.();
+      pendingSpeakDoneRef.current = null;
+      busyRef.current = false;
+      busySinceRef.current = 0;
+      queuedVoiceRef.current = null;
+      liveSpeakingRef.current = false;
+      echoCooldownUntilRef.current = 0;
+      callActiveRef.current = false;
+      setIsListening(false);
+      setMicLevel(0);
+      setLiveVoiceStage('idle');
+      setMood('idle');
+      try {
+        window.ApexAndroid?.stopNativeListen?.();
+      } catch {}
+      try {
+        window.speechSynthesis?.cancel?.();
+      } catch {}
+      try {
+        cancelAllSpeech();
+      } catch {}
+    };
+    window.addEventListener('apex:voice-reset', reset as EventListener);
+    const sayIt = (ev: Event) => {
+      const txt = String((ev as CustomEvent).detail || '').trim();
+      if (txt) void speak(txt);
+    };
+    window.addEventListener('apex:jarvis-say', sayIt as EventListener);
+    (window as any).__apexVoiceHealth = () => ({
+      busy: busyRef.current,
+      busyForMs: busySinceRef.current ? Date.now() - busySinceRef.current : 0,
+      speaking: liveSpeakingRef.current,
+      listening: isListening,
+      queued: queuedVoiceRef.current ? 1 : 0,
+      autoFollow: autoContinuousRef.current,
+      powered: poweredOnRef.current,
+      lastBot: lastSpokenRef.current.text.slice(0, 200),
+    });
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('apex:voice-reset', reset as EventListener);
+      window.removeEventListener('apex:jarvis-say', sayIt as EventListener);
+    };
+  }, [pushChatBubble, toast, isListening]);
+
   const releaseMicHardwareOnly = useCallback(() => {
     clearTimeout(idleStandbyTimerRef.current);
     sendChunkNowRef.current = null;
@@ -1725,6 +2090,18 @@ export const App: React.FC = () => {
           setMood('idle');
           return;
         }
+        // 👂 6.6.13: auto-follow ON ho to mic kabhi-kabhi Jarvis ka APNA aakhri jawab
+        //    sun leta hai (TTS echo) → "main kuchh bolta hoon, ye dusra sunta hai".
+        if (isOwnVoiceEcho(clean)) {
+          callActiveRef.current = false;
+          setLiveVoiceStage('idle');
+          setMood('idle');
+          showConfirmedBadge('🔇 Apni hi awaaz (echo) — ignore kiya');
+          try {
+            logDayEvent('🎙️ Voice', 'TTS echo pakad kar ignore kiya', clean.slice(0, 60), true);
+          } catch {}
+          return;
+        }
         setLiveUserText(clean);
         setLiveVoiceStage('thinking');
         setMood('thinking');
@@ -1812,6 +2189,12 @@ export const App: React.FC = () => {
           setMicLevel(0);
           setLiveInterimText('');
           const textOut = (finalTranscript || latestInterim).trim();
+          if (textOut && poweredOnRef.current && isOwnVoiceEcho(textOut)) {
+            showConfirmedBadge('🔇 Apni hi awaaz (echo) — ignore kiya');
+            setLiveVoiceStage('idle');
+            setMood('idle');
+            return;
+          }
           if (textOut && poweredOnRef.current) {
             handleUtterance(textOut, scheduleAfterReply);
           } else {
@@ -1894,6 +2277,12 @@ export const App: React.FC = () => {
                   callActiveRef.current = true;
                   openCallMicTurnRef.current();
                 }
+                return;
+              }
+              if (isOwnVoiceEcho(heard)) {
+                showConfirmedBadge('🔇 Apni hi awaaz (echo) — ignore kiya');
+                capturing = false;
+                scheduleAfterReply();
                 return;
               }
               handleUtterance(heard, scheduleAfterReply);
@@ -2456,18 +2845,25 @@ export const App: React.FC = () => {
             speak('Speaker volume full maximum boost par set ho gaya hai Boss!');
           }}
           isShareSafeGuest={!isOwnerSession}
-          onToggleOwnerVault={() => {
+          onToggleOwnerVault={async () => {
             if (isOwnerSession) {
               setOwnerUnlocked(false);
               localStorage.removeItem('apex_owner_vault_unlocked_v6');
               toast('🛡️ Share-Safe Mode ON — 0% Personal Data Visible!', 2600);
             } else {
-              const pin = window.prompt('👑 Private Owner Vault PIN daalein (Share-Safe se Owner Mode kholne ke liye):');
-              if (pin && pin.trim() === '7860') {
+              // v6.6.9: (a) Menu ▸ Admin PIN se set kiya PIN bhi chalega (pehle sirf
+              // 7860 chalta tha → "button kaam nahi karta" glitch), (b) WebView me
+              // prompt() dab jaata hai → in-app box use karte hain, (c) cancel par
+              // jhootha "galat PIN" error nahi.
+              const savedPin = apexOwnerPinForVault();
+              const pin = await apexAskText('👑 Private Owner Vault PIN', 'Share-Safe se Owner Mode kholne ke liye PIN daalein');
+              if (pin === null) return;
+              const p = pin.trim();
+              if (p && (p === '7860' || (savedPin && p === savedPin))) {
                 setOwnerUnlocked(true);
                 localStorage.setItem('apex_owner_vault_unlocked_v6', '1');
                 toast('👑 Owner Private Vault Unlocked!', 2600);
-              } else if (pin !== null) {
+              } else {
                 toast('❌ Galat Owner PIN — Share-Safe Protection Active!', 2400);
               }
             }
@@ -2520,6 +2916,11 @@ export const App: React.FC = () => {
           assistantOpen={assistantOpen}
           autoTrading={autoTrader.autoTrading}
           onTogglePower={togglePower}
+          onOpenCore={() => {
+            audio.unlockSpeaker();
+            setCoreOpen((v) => !v);
+          }}
+          coreOpen={coreOpen}
           onToggleChat={() => {
             audio.unlockSpeaker();
             setShowVoicePanel((prev) => !prev);
@@ -2734,6 +3135,25 @@ export const App: React.FC = () => {
             onClearTargetPlan={autoTrader.clearTargetPlan}
             onTriggerSentimentTrade={handleTriggerSentimentTrade}
           />
+
+          {coreOpen && (
+            <div className="fixed inset-0 z-[70] bg-[rgba(3,8,16,0.94)] overflow-y-auto overscroll-contain">
+              <div className="max-w-[560px] mx-auto px-3 pt-3 pb-24">
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <div className="text-[13px] font-black text-white tracking-wide">
+                    🛰️ APEX CORE — <span className="text-[#22d3ee]">{describeBuild()}</span>
+                  </div>
+                  <button
+                    onClick={() => setCoreOpen(false)}
+                    className="px-3 py-1.5 rounded-full bg-white/8 border border-white/15 text-[11px] font-black text-slate-200 cursor-pointer"
+                  >
+                    ✕ Band karo
+                  </button>
+                </div>
+                <JarvisAutonomyPanel onToast={toast} />
+              </div>
+            </div>
+          )}
 
           <YouTubeModal
             isOpen={youtubeOpen}

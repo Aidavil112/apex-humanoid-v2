@@ -1,6 +1,6 @@
 {
   "name": "apex-humanoid",
-  "version": "1.0.0",
+  "version": "6.6.11",
   "private": true,
   "description": "APEX Humanoid rebuild — WebGL2 point-cloud face + optional ElevenLabs voice",
   "main": "server.js",
@@ -13,7 +13,9 @@
     "telegram": "tsx telegram.ts",
     "telegram:info": "tsx scripts/telegram-setup.ts info",
     "telegram:webhook": "tsx scripts/telegram-setup.ts webhook",
-    "telegram:poll": "tsx scripts/telegram-setup.ts poll"
+    "telegram:poll": "tsx scripts/telegram-setup.ts poll",
+    "test:ui": "bash tools/ui-test.sh",
+    "test:apk": "bash tools/verify-apk.sh ../APEX-AI-Pro.apk"
   },
   "engines": {
     "node": ">=18"
@@ -39,6 +41,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^24.1.3",
     "tailwindcss": "^4.0.7",
     "vite": "^6.1.1",
     "wrangler": "^3.114.17"

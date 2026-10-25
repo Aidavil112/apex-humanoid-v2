@@ -53,7 +53,7 @@ export interface BrainFile {
   updatedAt: number;
 }
 
-const BRAIN_KEY = 'apex_brain_file_v1';
+export const BRAIN_KEY = 'apex_brain_file_v1';
 const LEGACY_MEM_KEY = 'jarvis_memories';
 /** headBotAutopilot ka settings key — wahan se GitHub repo/PAT uthate hain (import nahi, cycle se bachne ke liye) */
 const AUTOPILOT_SETTINGS_KEY = 'apex_headbot_autopilot_settings_v1';

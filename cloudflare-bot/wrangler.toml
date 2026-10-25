@@ -8,12 +8,11 @@ compatibility_date = "2025-01-01"
 [triggers]
 crons = ["*/10 * * * *"]
 
-# 🔑 KV namespace — iske bina state/token save nahi honge (pehle create karna hai):
-#    npx wrangler kv namespace create APEX_KV
-#    → jo id mile woh neeche paste karo
+# 🔑 KV namespace — 24 Oct 8:41 pm aapne banaya (APEX_KV), id neeche bhar di gayi hai.
+#    Naya banane ki zaroorat nahi. Dashboard me binding ka Variable name APEX_KV (ya KV_BINDING) rakhein.
 [[kv_namespaces]]
 binding = "APEX_KV"
-# id = "PAST_YOUR_NAMESPACE_ID_HERE"
+id = "e31bee0bb26c4fcc90154f80e1ba78da"
 
 # 📦 Static assets — jo worker / par app serve karta hai.
 #    Ye line TABHI rakhein jab aap DEPLOY-NOW.sh use kar rahe ho (wo ../dist ko ./site me copy karta hai).
@@ -30,3 +29,11 @@ directory = "./site"
 #   npx wrangler secret put IG_GRAPH_TOKEN            # optional (app me daalna behtar)
 #   npx wrangler secret put YOUTUBE_REFRESH_TOKEN     # abhi worker par NAHI hai (health me youtubeUploadAuth:false)
 #   npx wrangler secret put APEX_BRAIN_KEY            # optional — brain KV lock
+
+# 🪣 R2 public asset proxy (optional, ₹0): /asset/<key> → R2 object
+# Secrets (CLI se daalo, repo me mat likho):
+#   npx wrangler secret put R2_ACCESS_KEY_ID
+#   npx wrangler secret put R2_SECRET_ACCESS_KEY
+#   npx wrangler secret put R2_BUCKET          # e.g. apex
+#   npx wrangler secret put R2_ACCOUNT_HOST    # 94ea16…c0f9.r2.cloudflarestorage.com
+#   (optional) npx wrangler secret put R2_ENDPOINT  # endpoint ka scheme-less host bhi chalega

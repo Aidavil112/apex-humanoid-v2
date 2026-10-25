@@ -59,3 +59,28 @@ canvas {
 .pulse-dot {
   animation: pulse 2.4s ease-in-out infinite;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   ⚡ SMOOTH MODE (v6.6.10) — <html class="apex-smooth"> hone par ye chal jaata
+   hai. Mid-range MIUI WebView par backdrop-filter blur live WebGL hologram ke
+   upar fpsaad deta tha — yahi "atak ata hai" ka main kaaran tha.
+   ══════════════════════════════════════════════════════════════════════ */
+.apex-smooth *,
+.apex-smooth *::before,
+.apex-smooth *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.apex-smooth .backdrop-blur-md,
+.apex-smooth .backdrop-blur-xl,
+.apex-smooth .backdrop-blur-2xl {
+  background-color: rgba(6, 12, 22, 0.9) !important;
+}
+.apex-smooth [class*='shadow-'],
+.apex-smooth [class*='animate-pulse'] {
+  box-shadow: none !important;
+  animation: none !important;
+}
+.apex-smooth canvas {
+  filter: none !important;
+}

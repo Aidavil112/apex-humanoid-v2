@@ -16,8 +16,10 @@
  */
 
 import { hubFetch } from './api';
+import { logDayEvent } from './dayLog';
 import { createMission, executeMission, loadSettings } from './headBotAutopilot';
 import { parseGithubRepo, uploadBlobToGithub } from './assetHost';
+import { isR2Configured, loadR2Settings, uploadBlobToR2 } from './r2Host';
 import { noteBrain } from './brainMemory';
 import { listVaultVideos } from './videoVaultDb';
 
@@ -474,17 +476,40 @@ export interface IgPublishResult {
   videoTitle?: string;
 }
 
+/** 📊 v6.6.11: din bhar ka kaam dikhane ke liye har publish record hota hai. */
 export async function publishLatestVaultVideoToInstagram(): Promise<IgPublishResult> {
+  const r = await publishLatestVaultVideoToInstagramInner();
+  try {
+    logDayEvent(
+      '📸 Instagram',
+      r.ok ? 'nayi reel post bhej di' : 'post skip karna pada',
+      r.ok ? 'Graph API · R2/GitHub public URL → media_publish' : String((r as any).skipped || (r as any).error || 'unknown'),
+      Boolean(r.ok),
+    );
+  } catch {}
+  return r;
+}
+
+async function publishLatestVaultVideoToInstagramInner(): Promise<IgPublishResult> {
   const settings = loadSettings();
   if (!settings.igAccessToken || !settings.igBusinessId) return { ok: false, skipped: 'IG token / business id missing' };
-  if (!settings.ghToken || (!settings.ghRepo && !settings.ghOwner)) return { ok: false, skipped: 'GitHub PAT + repo missing (public URL ke liye)' };
-
   const vault = await listVaultVideos();
   const done = publishedIgIds();
   const target = vault.find((v) => !done.includes(v.id));
   if (!target) return { ok: false, skipped: 'Vault me naya (un-published) video nahi hai' };
 
-  const host = await uploadBlobToGithub({
+  // 🪣 Public host choose karo: R2 (10 GB free, 0 egress, bada file chalega) ya GitHub raw
+  //    (90 MB commit cap). 88 MB se upar ka file R2 ready ho to automatically R2 se jaayega.
+  const r2Settings = loadR2Settings();
+  const bigFile = target.blob.size > 88 * 1024 * 1024;
+  const useR2 = (settings.assetHostKind === 'r2' || bigFile) && isR2Configured(r2Settings);
+  if (!useR2 && (!settings.ghToken || (!settings.ghRepo && !settings.ghOwner))) {
+    return { ok: false, skipped: 'Public asset host missing — GitHub PAT+repo daalo ya 🪣 R2 card bhar do' };
+  }
+
+  const host = useR2
+    ? await uploadBlobToR2({ blob: target.blob, fileName: target.fileName, settings: r2Settings })
+    : await uploadBlobToGithub({
     token: settings.ghToken,
     owner: settings.ghOwner || (parseGithubRepo(settings.ghRepo)?.owner ?? ''),
     repo: settings.ghRepo.includes('/') ? (parseGithubRepo(settings.ghRepo)?.repo ?? settings.ghRepo) : settings.ghRepo,
@@ -492,7 +517,7 @@ export async function publishLatestVaultVideoToInstagram(): Promise<IgPublishRes
     fileName: target.fileName,
     blob: target.blob,
   });
-  if (!host.ok || !host.url) return { ok: false, error: `Host: ${host.error}`, videoTitle: target.title };
+  if (!host.ok || !host.url) return { ok: false, error: `Host(${useR2 ? 'R2' : 'GitHub'}): ${host.error}`, videoTitle: target.title };
 
   try {
     const r = await hubFetch('/social/ig/publish', {
@@ -509,7 +534,7 @@ export async function publishLatestVaultVideoToInstagram(): Promise<IgPublishRes
     const j: any = await r.json().catch(() => ({}));
     if (r.ok && j?.ok) {
       markIgPublished(target.id);
-      jarvisLog(`📸 IG auto-publish ho gaya: ${j.permalink || j.mediaId}`, 'ok');
+      jarvisLog(`📸 IG auto-publish ho gaya (${useR2 ? 'R2' : 'GitHub'} host): ${j.permalink || j.mediaId}`, 'ok');
       return { ok: true, permalink: String(j.permalink || ''), videoTitle: target.title };
     }
     return { ok: false, error: String(j?.error || `HTTP ${r.status}`).slice(0, 220), videoTitle: target.title };

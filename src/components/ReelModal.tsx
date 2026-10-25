@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { apexCopy, apexOpen, apexPaste } from '../engine/nativeUi';
 import { hubFetch } from '../engine/api';
 
 interface ReelModalProps {
@@ -43,7 +44,7 @@ export const ReelModal: React.FC<ReelModalProps> = ({
   };
 
   const handleOpenDirect = () => {
-    window.open(activeUrl, '_blank', 'noopener,noreferrer');
+    apexOpen(activeUrl);
   };
 
   const handleConvertToShort = () => {
@@ -212,7 +213,7 @@ export const ReelModal: React.FC<ReelModalProps> = ({
             <button
               onClick={() => {
                 if (generatedScript) {
-                  navigator.clipboard.writeText(generatedScript);
+                  apexCopy(generatedScript);
                   onToast('Script copied to clipboard!');
                 }
               }}

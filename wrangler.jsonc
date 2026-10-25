@@ -7,6 +7,14 @@
     "binding": "AI"
   },
   "triggers": {
-    "crons": ["*/10 * * * *"]
-  }
+    "crons": [
+      "*/10 * * * *"
+    ]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "APEX_KV",
+      "id": "e31bee0bb26c4fcc90154f80e1ba78da"
+    }
+  ]
 }

@@ -2,6 +2,7 @@
 // Inspects Reference URL ("check ka link") -> Writes Screenplay -> Loads Real Playing Wikimedia HD Motion Video Clips (.webm/.mp4)
 // + 60-Particle 3D Cyber Motion Layer + Studio Neural Hindi Voiceover (/yt/voice) -> Saves to Vault + Gallery!
 
+import { apexOpen } from './nativeUi';
 import { hubFetch } from './api';
 
 export interface MontageScene {
@@ -619,7 +620,7 @@ export async function shareMontageVideoToWhatsApp(video: ProducedMontageVideo, d
   a.href = video.url;
   a.download = video.fileName;
   a.click();
-  window.open(`https://wa.me/?text=${encodeURIComponent(fullCaption)}`, '_blank');
+  apexOpen(`https://wa.me/?text=${encodeURIComponent(fullCaption)}`);
   return true;
 }
 

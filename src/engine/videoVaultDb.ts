@@ -4,6 +4,8 @@
 import { hubFetch } from './api';
 import { uint8ToBase64 } from './openMontageEngine';
 
+import { logDayEvent } from './dayLog';
+
 export interface SavedVaultVideo {
   id: string;
   createdAt: number;
@@ -35,6 +37,13 @@ function openVaultDb(): Promise<IDBDatabase> {
   });
 }
 
+/** 🔎 v6.6.11: vault khaali na dikhe (file:// par directory listing nahi hoti) —
+ *    IndexedDB band ho to bhi app ke andar ke 8 clips gine jaate hain. */
+export async function vaultVideoCount(): Promise<number> {
+  const n = (await listVaultVideos().catch(() => [] as SavedVaultVideo[])).length;
+  return n;
+}
+
 export async function saveVideoToVault(entry: SavedVaultVideo): Promise<void> {
   const db = await openVaultDb();
   await new Promise<void>((resolve, reject) => {
@@ -44,6 +53,14 @@ export async function saveVideoToVault(entry: SavedVaultVideo): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
   db.close();
+  try {
+    logDayEvent(
+      '🎬 Motion Studio',
+      `video vault me save hui — ${entry.title || entry.fileName}`,
+      `${(entry.sizeBytes / 1e6).toFixed(1)} MB · ${(entry.durationSec || 0).toFixed(1)}s · IndexedDB`,
+      true,
+    );
+  } catch {}
 }
 
 export async function listVaultVideos(): Promise<SavedVaultVideo[]> {

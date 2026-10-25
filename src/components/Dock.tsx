@@ -20,6 +20,8 @@ interface DockProps {
   onToggleMic: () => void;
   onOpenTrading?: () => void;
   onOpenSocialStudio?: () => void;
+  onOpenCore?: () => void;
+  coreOpen?: boolean;
 }
 
 const PowerIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -54,6 +56,8 @@ export const Dock: React.FC<DockProps> = ({
   onToggleMic,
   onOpenTrading,
   onOpenSocialStudio,
+  onOpenCore,
+  coreOpen = false,
 }) => {
   if (!poweredOn) {
     return (
@@ -171,6 +175,22 @@ export const Dock: React.FC<DockProps> = ({
           }`}
         >
           📈
+        </button>
+      )}
+
+      {/* 5b. 🛰️ 1-Tap APEX CORE — Jarvis build/self-check, 📁 ALL VIDEOS, 🎬 Motion
+          Forge, 🏢 Company Mode, 🪣 R2, ⚡ Smooth mode (v6.6.10: pehle ye panel
+          4 tap door tha, isliye user ko naye features dikhte hi nahi the) */}
+      {onOpenCore && (
+        <button
+          onClick={onOpenCore}
+          aria-label="APEX Core panel"
+          title="🛰️ APEX Core — videos, Motion Forge, self-check, smooth mode"
+          className={`cursor-pointer w-9 h-9 rounded-full text-sm flex items-center justify-center transition-all border shrink-0 ${
+            coreOpen ? 'bg-[rgba(34,211,238,0.22)] border-[#22d3ee] text-[#22d3ee]' : 'bg-white/[0.04] hover:bg-white/10 border-white/10 text-white/85'
+          }`}
+        >
+          🛰️
         </button>
       )}
 

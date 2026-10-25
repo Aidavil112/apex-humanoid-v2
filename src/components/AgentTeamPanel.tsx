@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { apexCopy, apexOpen, apexPaste } from '../engine/nativeUi';
 import { hubFetch } from '../engine/api';
 import {
   BacklotStageId,
@@ -166,7 +167,9 @@ export const AgentTeamPanel: React.FC<{
   onToast: (msg: string) => void;
   autoVoiceTask?: { action?: 'make_and_save' | 'upload_saved' | 'open_only' | 'headbot_autopilot'; topic: string; refUrl?: string; nonce: number } | null;
 }> = ({ onToast, autoVoiceTask }) => {
-  const [stage, setStage] = useState<'openvideo' | 'autopilot' | 'jarvis' | 'map' | 'engine' | 'leads' | 'booking' | 'morning'>('openvideo');
+  // v6.6.10: default stage 'jarvis' — warna 📁 ALL VIDEOS / 🎬 Motion Forge / ✅ latest
+  // check wala panel 4 tap door chupa rehta tha ("jo bola wo kiya hi nahi" wali shikayat).
+  const [stage, setStage] = useState<'openvideo' | 'autopilot' | 'jarvis' | 'map' | 'engine' | 'leads' | 'booking' | 'morning'>('jarvis');
   const [autoTourRunning, setAutoTourRunning] = useState(false);
 
   // OpenMontage Autonomous Video Agent ("OpenMontage khol kar video bana kar SAVE rakho — jab time aaye tab Upload karunga!")
@@ -247,7 +250,7 @@ export const AgentTeamPanel: React.FC<{
         : `${title} #Shorts #YouTubeShorts\n\n${baseCaption}`;
 
     try {
-      await navigator.clipboard?.writeText(platformCaption);
+      await apexCopy(platformCaption);
     } catch {}
 
     if (platform === 'gallery') {
@@ -284,7 +287,7 @@ export const AgentTeamPanel: React.FC<{
         : platform === 'facebook'
         ? 'https://www.facebook.com/reels/create/'
         : 'https://studio.youtube.com/';
-    window.open(webFallback, '_blank');
+    apexOpen(webFallback);
     onToast(`📋 Caption copy ho gaya! Video select karke post karein.`);
   };
 
@@ -572,7 +575,7 @@ export const AgentTeamPanel: React.FC<{
     const url = target
       ? `https://wa.me/${target}?text=${encodeURIComponent(msg)}`
       : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-    window.open(url, '_blank');
+    apexOpen(url);
     onToast('📲 WhatsApp opened with ready AI pitch & booking link!');
   };
 
@@ -718,7 +721,7 @@ export const AgentTeamPanel: React.FC<{
               <button
                 onClick={async () => {
                   const cap = `${listingTitle} 🔥✨\n\n${scriptText}\n\n#reelsindia #instagramreels #trendingreels #viralvideo #explorepage`;
-                  try { await navigator.clipboard?.writeText(cap); } catch {}
+                  try { await apexCopy(cap); } catch {}
                   onToast('📋 Instagram Reel Caption + Hashtags Copy Ho Gaya!');
                 }}
                 className="flex-1 py-1.5 px-2 rounded-lg bg-white border border-pink-300 text-pink-900 font-extrabold text-[10.5px] cursor-pointer"
@@ -732,7 +735,7 @@ export const AgentTeamPanel: React.FC<{
                   } else if (vaultVideos[0]) {
                     handleShareBlobToPlatform(vaultVideos[0].blob, vaultVideos[0].fileName, vaultVideos[0].mimeType, vaultVideos[0].title, vaultVideos[0].caption, 'instagram');
                   } else {
-                    window.open('https://www.instagram.com/', '_blank');
+                    apexOpen('https://www.instagram.com/');
                     onToast('📸 Instagram khol diya gaya hai!');
                   }
                 }}
@@ -758,7 +761,7 @@ export const AgentTeamPanel: React.FC<{
               <button
                 onClick={async () => {
                   const cap = `📢 ${listingTitle}\n\n${scriptText}\n\n👍 Follow & Share karein! #FacebookReels #ViralVideo #India`;
-                  try { await navigator.clipboard?.writeText(cap); } catch {}
+                  try { await apexCopy(cap); } catch {}
                   onToast('📋 Facebook Post Description Copy Ho Gaya!');
                 }}
                 className="flex-1 py-1.5 px-2 rounded-lg bg-white border border-blue-300 text-blue-900 font-extrabold text-[10.5px] cursor-pointer"
@@ -772,7 +775,7 @@ export const AgentTeamPanel: React.FC<{
                   } else if (vaultVideos[0]) {
                     handleShareBlobToPlatform(vaultVideos[0].blob, vaultVideos[0].fileName, vaultVideos[0].mimeType, vaultVideos[0].title, vaultVideos[0].caption, 'facebook');
                   } else {
-                    window.open('https://m.facebook.com/', '_blank');
+                    apexOpen('https://m.facebook.com/');
                     onToast('📘 Facebook khol diya gaya hai!');
                   }
                 }}
@@ -798,7 +801,7 @@ export const AgentTeamPanel: React.FC<{
               <button
                 onClick={async () => {
                   const cap = `${listingTitle} #Shorts #YouTubeShorts\n\n${scriptText}`;
-                  try { await navigator.clipboard?.writeText(cap); } catch {}
+                  try { await apexCopy(cap); } catch {}
                   onToast('📋 YouTube SEO Title + Tags Copy Ho Gaya!');
                 }}
                 className="flex-1 py-1.5 px-2 rounded-lg bg-white border border-red-300 text-red-900 font-extrabold text-[10.5px] cursor-pointer"
@@ -812,7 +815,7 @@ export const AgentTeamPanel: React.FC<{
                   } else if (omVideo) {
                     handleShareBlobToPlatform(omVideo.blob, omVideo.fileName, omVideo.mimeType, omVideo.title, omVideo.caption, 'youtube');
                   } else {
-                    window.open('https://studio.youtube.com/', '_blank');
+                    apexOpen('https://studio.youtube.com/');
                     onToast('▶️ YouTube Studio khol diya gaya hai!');
                   }
                 }}

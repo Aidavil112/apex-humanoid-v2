@@ -9,6 +9,7 @@
  *     Auto-Login token), aur Instagram/Facebook ka composer caption pre-copied ke saath khud khol deta hai.
  */
 
+import { apexCopy, apexPaste } from './nativeUi';
 import { hubFetch } from './api';
 import { runOpenMontageProduction, type BacklotStageId, type ProducedMontageVideo } from './openMontageEngine';
 import { saveVideoToVault, listVaultVideos, type SavedVaultVideo } from './videoVaultDb';
@@ -74,6 +75,8 @@ export interface AutoPilotSettings {
   defaultMinute: number;
   autoPublishDefault: boolean;
   /** 🆓 Free public asset host (Instagram Graph API ko public URL chahiye) */
+  /** 'github' = repo raw link (90 MB cap) | 'r2' = Cloudflare R2 (10 GB free, 0 egress) */
+  assetHostKind: 'github' | 'r2';
   ghToken: string;
   ghOwner: string;
   ghRepo: string;
@@ -97,6 +100,7 @@ export const DEFAULT_SETTINGS: AutoPilotSettings = {
   defaultHour: 18,
   defaultMinute: 30,
   autoPublishDefault: true,
+  assetHostKind: 'github',
   ghToken: '',
   ghOwner: 'Aidavil112',   // 2026-10-24: asli GitHub login (pradhanbibek53 Cloudflare subdomain hai, GitHub par 404)
   ghRepo: 'apex-humanoid-v2',   // user ka public repo (brain CLAUDE.md + IG video host yahi jaayega)
@@ -206,6 +210,7 @@ export function loadSettings(): AutoPilotSettings {
     if (!raw) return { ...DEFAULT_SETTINGS };
     const merged = { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AutoPilotSettings>) };
     // v6.6.4: purane save me ghOwner/ghRepo khaali the (GitHub username 404 wala bug) → default bhar do
+    if (merged.assetHostKind !== 'r2' && merged.assetHostKind !== 'github') merged.assetHostKind = 'github';
     if (!merged.ghOwner) merged.ghOwner = DEFAULT_SETTINGS.ghOwner;
     if (!merged.ghRepo) merged.ghRepo = DEFAULT_SETTINGS.ghRepo;
     return merged;
@@ -787,7 +792,7 @@ async function publishMission(
     pushLog(m, `📸 Instagram Reel composer khol diya — caption pehle se copy hai`, 'info');
     try {
       if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(`${m.caption || m.title}\n\n${(m.hashtags || []).map((h) => `#${h}`).join(' ')}`);
+        await apexCopy(`${m.caption || m.title}\n\n${(m.hashtags || []).map((h) => `#${h}`).join(' ')}`);
       }
     } catch {}
     handoffToApp('instagram', bridge);

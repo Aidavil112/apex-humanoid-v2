@@ -1,4 +1,20 @@
 import { CharacterConfig, MoodConfig, MoodType } from '../types';
+import { isSmoothMode } from './perfMode';
+
+/** ⚡ v6.6.10 — Smooth mode me glow off: 2D canvas ka shadowBlur mobile par sabse
+ *    mehnga op hai (live hologram ke upar per-particle = fps drop → "atak" feeling).
+ *    400ms ka cache isliye ki per-frame localStorage na padhna pade. */
+let __smoothCache: boolean | null = null;
+let __smoothAt = 0;
+function smoothNow(): boolean {
+  const t = Date.now();
+  if (__smoothCache === null || t - __smoothAt > 400) {
+    __smoothAt = t;
+    try { __smoothCache = isSmoothMode(); } catch { __smoothCache = false; }
+  }
+  return __smoothCache;
+}
+
 
 function mulberry32(a: number) {
   return function () {
@@ -1320,7 +1336,7 @@ export class WebGLEngine {
         hctx.globalAlpha = alpha;
         hctx.lineWidth = Math.max(1.2, 3.5 * (1 - progress));
         hctx.shadowColor = ring.color;
-        hctx.shadowBlur = 12;
+        hctx.shadowBlur = smoothNow() ? 0 : 12;
         hctx.setLineDash([16, 8]);
         hctx.stroke();
       }
@@ -1353,7 +1369,7 @@ export class WebGLEngine {
         hctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
         hctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
         hctx.shadowColor = `rgba(${r}, ${g}, ${b}, ${alpha})`;
-        hctx.shadowBlur = 8;
+        hctx.shadowBlur = smoothNow() ? 0 : 8;
         hctx.fill();
 
         // High-velocity spark trail
@@ -1405,7 +1421,7 @@ export class WebGLEngine {
         hctx.strokeStyle = border;
         hctx.lineWidth = 1.2;
         hctx.shadowColor = color;
-        hctx.shadowBlur = 8;
+        hctx.shadowBlur = smoothNow() ? 0 : 8;
         hctx.stroke();
         hctx.shadowBlur = 0;
 
