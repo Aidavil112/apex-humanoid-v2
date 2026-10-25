@@ -14,6 +14,7 @@ import { hubFetch } from './api';
 import { runOpenMontageProduction, type BacklotStageId, type ProducedMontageVideo } from './openMontageEngine';
 import { saveVideoToVault, listVaultVideos, type SavedVaultVideo } from './videoVaultDb';
 import { noteBrain } from './brainMemory';
+import { renderMotionForgeVideo, type MotionStyle } from './motionForge';
 
 const QUEUE_KEY = 'apex_headbot_autopilot_queue_v1';
 const SETTINGS_KEY = 'apex_headbot_autopilot_settings_v1';
@@ -88,6 +89,9 @@ export interface AutoPilotSettings {
   dailyNiche: string;
   dailyPlatforms: { instagram: boolean; facebook: boolean; youtube: boolean };
   lastDailyRunDay: string;
+  /** 🎬 REEL ENGINE — video ka source: 'auto' = motion pehle (fail par footage), 'footage' = sirf web clips, 'motion' = sirf canvas render */
+  reelEngine: 'auto' | 'footage' | 'motion';
+  motionStyle: MotionStyle;
 }
 
 export const DEFAULT_SETTINGS: AutoPilotSettings = {
@@ -111,6 +115,8 @@ export const DEFAULT_SETTINGS: AutoPilotSettings = {
   dailyNiche: 'AI, Tech & Business Growth India',
   dailyPlatforms: { instagram: true, facebook: true, youtube: true },
   lastDailyRunDay: '',
+  reelEngine: 'auto',
+  motionStyle: 'kino-glass', // client default: kino-glass (style chips se badal sakte ho)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +219,13 @@ export function loadSettings(): AutoPilotSettings {
     if (merged.assetHostKind !== 'r2' && merged.assetHostKind !== 'github') merged.assetHostKind = 'github';
     if (!merged.ghOwner) merged.ghOwner = DEFAULT_SETTINGS.ghOwner;
     if (!merged.ghRepo) merged.ghRepo = DEFAULT_SETTINGS.ghRepo;
+    // v6.6.15: purane blob me reelEngine/motionStyle the hi nahi → default bhar do (type-safe)
+    if (merged.reelEngine !== 'footage' && merged.reelEngine !== 'motion' && merged.reelEngine !== 'auto') {
+      merged.reelEngine = DEFAULT_SETTINGS.reelEngine;
+    }
+    if (merged.motionStyle !== 'neon-pulse' && merged.motionStyle !== 'kino-glass' && merged.motionStyle !== 'brutal-flash') {
+      merged.motionStyle = DEFAULT_SETTINGS.motionStyle;
+    }
     return merged;
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -638,6 +651,8 @@ export async function executeMission(missionId: string, onStage?: StageFn): Prom
     onStage?.(m);
   };
 
+  const settings = loadSettings(); // 🎛️ engine choice (auto/motion/footage) mission ke start par lock
+
   try {
     // STEP 1 — LIVE ONLINE RESEARCH
     m.status = 'researching';
@@ -663,13 +678,68 @@ export async function executeMission(missionId: string, onStage?: StageFn): Prom
     );
     emit();
 
-    // STEP 2 + 3 — VIDEO PRODUCTION FROM FOUND WEBSITE FOOTAGE
+    // STEP 2 + 3 — VIDEO PRODUCTION · 🎛️ ENGINE ROUTER (motion canvas ↔ web footage)
     m.status = 'producing';
     m.stage = 'assets';
-    pushLog(m, `🎬 Dusri websites ki footage se 9:16 HD video render ho raha hai…`, 'info');
     emit();
 
-    const video = await runOpenMontageProduction({
+    const cfg = settings;
+    const clipsGot = pack.clipUrls.length > 0;
+    // 🎲 auto rule: clips na milen to motion (nafaa: footage research fail hone par bhi reel banti hai)
+    const wantMotion = cfg.reelEngine === 'motion' || (cfg.reelEngine === 'auto' && !pack.clipUrls.length);
+    if (cfg.reelEngine === 'auto') {
+      pushLog(m, clipsGot ? `📹 AUTO rule: ${pack.clipUrls.length} real clips mile → footage engine` : '🎲 AUTO rule: clips nahi mile → Motion Forge (canvas) engine', 'info');
+      emit();
+    }
+    let video: ProducedMontageVideo | null = null;
+
+    if (wantMotion) {
+      pushLog(m, `✨ Motion engine — canvas par 1080×1920 frames render ho rahe hain…`, 'info');
+      emit();
+      try {
+        const mv = await withTimeout(
+          renderMotionForgeVideo(`${m.goal} ${settings.motionStyle || ''}`.trim(), {
+            style: cfg.motionStyle,
+            durationSec: Math.min(30, Math.max(6, m.targetSeconds || 30)),
+            width: 1080,
+            height: 1920,
+            fps: 30,
+            saveToVault: false,
+            onProgress: (pct, note) => {
+              m.progress = Math.max(m.progress, Math.min(86, 24 + Math.round(pct * 60)));
+              if (note) pushLog(m, note);
+              emit();
+            },
+          }),
+          120000,
+          'Motion render' + ' 120s me pura nahi hua (watchdog)'
+        );
+        if (mv.ok && mv.blob) {
+          video = {
+            blob: mv.blob,
+            url: mv.url || '',
+            base64: await blobToBase64(mv.blob),
+            mimeType: mv.mimeType || mv.blob.type || 'video/webm',
+            fileName: mv.fileName || `apex-motion-${Date.now()}.webm`,
+            title: mv.title || m.title || m.goal,
+            caption: mv.caption || m.caption || '',
+            durationSec: mv.durationSec || Math.min(30, Math.max(6, m.targetSeconds || 30)),
+            scenes: [],
+          };
+          pushLog(m, `✅ Motion render taiyaar (${(mv.blob.size / 1048576).toFixed(2)} MB) — footage ki zarurat nahi padi`, 'ok');
+        } else {
+          pushLog(m, `⚠️ Motion render fail: ${mv.error || 'unknown reason'} → footage engine par switch (fallback)`, 'warn');
+        }
+      } catch (e: any) {
+        pushLog(m, `⚠️ Motion render fail: ${String(e?.message || e)} → footage engine par switch (fallback)`, 'warn');
+      }
+      emit();
+    }
+
+    if (!video) {
+      pushLog(m, `🎬 Dusri websites ki footage se 9:16 HD video render ho raha hai…`, 'info');
+      emit();
+      video = await runOpenMontageProduction({
       topic: m.goal,
       targetSeconds: m.targetSeconds || 30,
       researchBrief: pack.brief,
@@ -682,7 +752,8 @@ export async function executeMission(missionId: string, onStage?: StageFn): Prom
         pushLog(m, line);
         emit();
       },
-    });
+      });
+    }
 
     m.progress = 90;
     pushLog(m, `💾 Video taiyaar — pehle Vault + Phone Gallery me SAVE kar raha hoon (Save-First Rule)`, 'ok');
@@ -815,6 +886,14 @@ async function publishVaultVideo(m: HeadBotMission, bridge: any, emit: () => voi
   if (!v) throw new Error('Vault me video nahi mila');
   const base64 = await blobToBase64(v.blob);
   await publishMission(m, v.blob, { youtubeBase64: base64 }, bridge, emit);
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, why: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(why)), ms);
+    p.then((v) => { clearTimeout(timer); resolve(v); })
+      .catch((e) => { clearTimeout(timer); reject(e); });
+  });
 }
 
 function blobToBase64(blob: Blob): Promise<string> {

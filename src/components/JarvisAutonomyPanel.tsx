@@ -25,7 +25,7 @@ import {
   type JarvisSlot,
   type JarvisState,
 } from '../engine/jarvisCore';
-import { loadSettings, saveSettings } from '../engine/headBotAutopilot';
+import { loadSettings, runMissionNow, saveSettings } from '../engine/headBotAutopilot';
 import { publishLatestVaultVideoToInstagram } from '../engine/jarvisCore';
 import { hubFetch } from '../engine/api';
 import { checkGithubAccess } from '../engine/assetHost';
@@ -170,6 +170,10 @@ export const JarvisAutonomyPanel: React.FC<{
     matchedLabel?: string;
   }>(null);
   const patchR2 = (patch: Partial<R2Settings>) => setR2(saveR2Settings(patch));
+  // 🎛️ REEL ENGINE — Head Bot ka video source (auto/motion/footage) + ek tap me auto reel
+  const [autoReelBusy, setAutoReelBusy] = useState(false);
+  const [autoReelLine, setAutoReelLine] = useState('');
+  const [autoPublish, setAutoPublish] = useState(false);
   // 🎬 Motion Forge (prompt → cinematic reel, device par render)
   const [mfPrompt, setMfPrompt] = useState('');
   const [mfStyle, setMfStyle] = useState<MotionStyle | 'auto'>('auto');
@@ -1539,11 +1543,58 @@ export const JarvisAutonomyPanel: React.FC<{
           placeholder='Prompt likho, e.g. "41 agents, 0 meetings, 10x faster delivery. Follow APEX for the setup."'
           className="w-full h-16 bg-[#0b1220] border border-white/10 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-slate-100 resize-none"
         />
+        <div className="text-[9px] font-black text-emerald-200">🎛️ REEL ENGINE — Head Bot isi engine se auto reel banayega</div>
+        <div className="text-[9px] font-bold text-slate-400 leading-snug">🔁 pipeline: 🌐 live research → 🕵️ clips → ✨ motion render (watchdog 120s, stuck nahi hota) → 💾 Vault + Gallery → ⏰ time par upload</div>
+        <div className="flex flex-wrap gap-1.5">
+          {(['auto', 'footage', 'motion'] as const).map((k) => (
+            <button
+              key={k}
+              onClick={() => { patchIg({ reelEngine: k }); onToast(k === 'motion' ? '🎛️ Engine: Motion Forge (0 GPU, 0 paisa)' : k === 'footage' ? '🎛️ Engine: web footage' : '🎛️ Engine: auto (motion pehle, fail par footage)'); }}
+              className={`px-2 py-1 rounded-lg text-[9px] font-black cursor-pointer ${settings.reelEngine === k ? 'bg-emerald-500/25 text-emerald-100' : 'bg-white/10 text-slate-300'}`}
+            >
+              {k === 'auto' ? '🎲 AUTO' : k === 'footage' ? '📹 FOOTAGE' : '✨ MOTION'}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-1.5">
+          <button
+            disabled={autoReelBusy}
+            onClick={async () => {
+              setAutoReelBusy(true);
+              setAutoReelLine('🌐 research → 🎬 render → 💾 save…');
+              try {
+                const goal = mfPrompt.trim().length > 6 ? mfPrompt.trim() : 'AI agents se chhote business ki growth (India)';
+                patchIg({ autoPublishDefault: autoPublish });
+                const mission = await runMissionNow(
+                  { goal, niche: goal, targetSeconds: 30, platforms: { instagram: true, facebook: true, youtube: true } },
+                  (m) => setAutoReelLine(`${m.stage || m.status} · ${m.progress || 0}%`)
+                );
+                setAutoReelLine(mission ? `✅ ${mission.status} · ${mission.title || mission.goal}` : '⚠️ mission nahi chala (worker/research fail — footage fallback dekho)');
+                onToast(mission ? `🎬 Auto reel: ${mission.status}` : '⚠️ Auto reel fail');
+                refresh();
+              } catch (e: any) {
+                setAutoReelLine(`⚠️ ${String(e?.message || e).slice(0, 110)}`);
+              } finally {
+                setAutoReelBusy(false);
+              }
+            }}
+            className={`flex-1 py-2 rounded-xl text-[10px] font-black cursor-pointer ${autoReelBusy ? 'bg-white/10 text-slate-400' : 'bg-gradient-to-r from-emerald-600 to-cyan-600 text-white'}`}
+          >
+            {autoReelBusy ? '⏳ AUTO REEL CHAL RAHI…' : '🤖 AUTO REEL CHALAO'}
+          </button>
+          <button
+            onClick={() => { setAutoPublish(!autoPublish); patchIg({ autoPublishDefault: !autoPublish }); onToast(!autoPublish ? '📤 Save + publish ON' : '💾 Sirf save (Save-First) ON'); }}
+            className={`px-2 py-2 rounded-xl text-[9px] font-black cursor-pointer ${autoPublish ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-slate-200'}`}
+          >
+            {autoPublish ? '📤 SAVE + PUBLISH' : '📥 SIRF SAVE'}
+          </button>
+        </div>
+        {!!autoReelLine && <div className="text-[9px] font-bold text-emerald-200/90 leading-snug">{autoReelLine}</div>}
         <div className="flex flex-wrap gap-1.5">
           {(['auto', 'neon-pulse', 'kino-glass', 'brutal-flash'] as const).map((k) => (
             <button
               key={k}
-              onClick={() => setMfStyle(k)}
+              onClick={() => { setMfStyle(k); if (k !== 'auto') patchIg({ motionStyle: k }); }}
               className={`px-2 py-1 rounded-lg text-[9px] font-black cursor-pointer ${mfStyle === k ? 'bg-fuchsia-500/25 text-fuchsia-100' : 'bg-white/10 text-slate-300'}`}
             >
               {k === 'auto' ? '🎲 AUTO' : k === 'neon-pulse' ? '⚡ NEON' : k === 'kino-glass' ? '🎥 KINO' : '🔥 BRUTAL'}
