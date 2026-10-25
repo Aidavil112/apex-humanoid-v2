@@ -25,7 +25,8 @@ import {
   type JarvisSlot,
   type JarvisState,
 } from '../engine/jarvisCore';
-import { loadSettings, runMissionNow, saveSettings } from '../engine/headBotAutopilot';
+import { loadSettings, resumeInterruptedMissions, runMissionNow, saveSettings } from '../engine/headBotAutopilot';
+import { iosAutopilotNote, isAppleTouch, keepAwake, releaseAwake, wakeLockState, wakeLockSupported } from '../engine/iosAutopilot';
 import { publishLatestVaultVideoToInstagram } from '../engine/jarvisCore';
 import { hubFetch } from '../engine/api';
 import { checkGithubAccess } from '../engine/assetHost';
@@ -172,6 +173,7 @@ export const JarvisAutonomyPanel: React.FC<{
   const patchR2 = (patch: Partial<R2Settings>) => setR2(saveR2Settings(patch));
   // 🎛️ REEL ENGINE — Head Bot ka video source (auto/motion/footage) + ek tap me auto reel
   const [autoReelBusy, setAutoReelBusy] = useState(false);
+  const [screenLock, setScreenLock] = useState<'on' | 'off' | 'unsupported'>(() => wakeLockState());
   const [autoReelLine, setAutoReelLine] = useState('');
   const [autoPublish, setAutoPublish] = useState(false);
   // 🎬 Motion Forge (prompt → cinematic reel, device par render)
@@ -1545,6 +1547,36 @@ export const JarvisAutonomyPanel: React.FC<{
         />
         <div className="text-[9px] font-black text-emerald-200">🎛️ REEL ENGINE — Head Bot isi engine se auto reel banayega</div>
         <div className="text-[9px] font-bold text-slate-400 leading-snug">🔁 pipeline: 🌐 live research → 🕵️ clips → ✨ motion render (watchdog 120s, stuck nahi hota) → 💾 Vault + Gallery → ⏰ time par upload</div>
+        {isAppleTouch() && (
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-2 py-1.5 space-y-1">
+            <div className="text-[9px] font-black text-amber-100">🍎 iPHONE MODE — jo sach me chal sakta hai</div>
+            <div className="text-[8.5px] font-bold text-amber-100/80 leading-snug">{iosAutopilotNote()}</div>
+            <div className="flex gap-1.5">
+              <button
+                disabled={!wakeLockSupported()}
+                onClick={async () => {
+                  if (screenLock === 'on') { releaseAwake(); setScreenLock('off'); onToast('🖥️ Screen lock chhod diya'); return; }
+                  const ok = await keepAwake('user');
+                  setScreenLock(wakeLockState());
+                  onToast(ok ? '🖥️ Screen jaagti rahegi — autopilot ke waqt phone so nahi jayega' : '⚠️ Wake Lock nahi mila (iOS 16.4+ / battery saver off karo)');
+                }}
+                className={`px-2 py-1 rounded-lg text-[8.5px] font-black cursor-pointer disabled:opacity-40 ${screenLock === 'on' ? 'bg-emerald-500/25 text-emerald-100' : 'bg-white/10 text-slate-200'}`}
+              >
+                {screenLock === 'on' ? '🖥️ SCREEN ON: ON' : wakeLockSupported() ? '🖥️ SCREEN ON KARO' : '🖥️ WAKE LOCK NAHI'}
+              </button>
+              <button
+                onClick={() => {
+                  const r = resumeInterruptedMissions({ staleMs: 0 });
+                  onToast(r.found ? `🍎 Catch-up: ${r.requeued} render + ${r.uploadRetried} upload dobara queue me` : '🍎 Koi adhoori mission nahi mili');
+                  refresh();
+                }}
+                className="px-2 py-1 rounded-lg text-[8.5px] font-black bg-white/10 text-slate-200 cursor-pointer"
+              >
+                🔁 CATCH-UP CHALAO
+              </button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-1.5">
           {(['auto', 'footage', 'motion'] as const).map((k) => (
             <button

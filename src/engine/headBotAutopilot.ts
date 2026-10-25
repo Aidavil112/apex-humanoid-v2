@@ -15,6 +15,7 @@ import { runOpenMontageProduction, type BacklotStageId, type ProducedMontageVide
 import { saveVideoToVault, listVaultVideos, type SavedVaultVideo } from './videoVaultDb';
 import { noteBrain } from './brainMemory';
 import { renderMotionForgeVideo, type MotionStyle } from './motionForge';
+import { keepAwake, releaseAwake, isAppleTouch } from './iosAutopilot';
 
 const QUEUE_KEY = 'apex_headbot_autopilot_queue_v1';
 const SETTINGS_KEY = 'apex_headbot_autopilot_settings_v1';
@@ -652,6 +653,8 @@ export async function executeMission(missionId: string, onStage?: StageFn): Prom
   };
 
   const settings = loadSettings(); // 🎛️ engine choice (auto/motion/footage) mission ke start par lock
+  // 🍎 iPhone: render ke waqt screen jaagti rahe (warna 30s me so jaata hai aur mission beech me marti hai)
+  void keepAwake('mission');
 
   try {
     // STEP 1 — LIVE ONLINE RESEARCH
@@ -811,6 +814,7 @@ export async function executeMission(missionId: string, onStage?: StageFn): Prom
   }
   upsertMission(m);
   emit();
+  releaseAwake(); // 🍎 mission khatam — ab screen normal
   return m;
 }
 
@@ -937,13 +941,87 @@ export function createMission(input: {
 let busy = false;
 
 /** Heartbeat: har 20 second me queue check karta hai — time hote hi khud research/save/upload complete. */
+/**
+ * 🍎 iOS CATCH-UP — app band/hui ya phone ne JS suspend kiya, tab jo mission adhoori ruki
+ * (status researching/producing/uploading, par 2 min se koi halchal nahi) use wapas zinda karo.
+ *
+ *   researching/producing  → status 'queued' (heartbeat agla tick par khud chalayega)
+ *   uploading + vaultId    → publishVaultVideo se upload dobara
+ *
+ * Jhooth nahi: ye tab chalta hai jab app WAPAS khule. Phone band = kuch nahi chalta.
+ */
+export function resumeInterruptedMissions(opts: { staleMs?: number } = {}): {
+  found: number;
+  requeued: number;
+  uploadRetried: number;
+} {
+  const staleMs = opts.staleMs ?? 120_000;
+  const now = Date.now();
+  const queue = loadQueue();
+  let requeued = 0;
+  let uploadRetried = 0;
+  let found = 0;
+
+  const next = queue.map((m) => {
+    const running = m.status === 'researching' || m.status === 'producing' || m.status === 'uploading';
+    if (!running) return m;
+    if (now - (m.createdAt || 0) < staleMs) return m; // abhi-asli me chal rahi ho sakti hai
+    found++;
+    if (m.status === 'uploading' && m.vaultId) {
+      uploadRetried++;
+      return {
+        ...m,
+        status: 'awaiting_time' as MissionStatus,
+        scheduledAt: Date.now(),
+        log: [...m.log.slice(-59), { t: now, line: '🍎 Upload adhoora tha (app band hui) → abhi dobara try', level: 'warn' as const }],
+      };
+    }
+    requeued++;
+    return {
+      ...m,
+      status: 'queued' as MissionStatus,
+      scheduledAt: null, // createdAt chhua nahi → heartbeat ka stale-queued rule ise turant uthata hai
+      log: [
+        ...m.log.slice(-59),
+        {
+          t: now,
+          line: `🍎 Catch-up: mission ${isAppleTouch() ? 'iPhone' : 'app'} band hone se ${m.status} par ruka tha → dobara queue me`,
+          level: 'warn' as const,
+        },
+      ],
+    };
+  });
+
+  if (found) persistQueue(next);
+  return { found, requeued, uploadRetried };
+}
+
 export function startAutopilotHeartbeat(onTick?: StageFn): () => void {
   const bridge = typeof window !== 'undefined' ? (window as any).ApexAndroid : null;
   let timer: number | null = null;
 
+  let recovered = false;
+
   const tick = async () => {
     if (busy) return;
+    // 🍎 pehla tick par: app band hone se adhoori ruki missions ko wapas queue karo
+    if (!recovered) {
+      recovered = true;
+      resumeInterruptedMissions(); // 🍎 app khulte hi adhoori mission wapas queue me
+    }
     const queue = loadQueue();
+    // 🍎 iOS catch-up: 'queued' mission jo 2 min se atki hai (app band/refresh ho gaya tha) → ab chalao
+    const staleQueued = queue.find((x) => x.status === 'queued' && Date.now() - x.createdAt > 120_000);
+    if (staleQueued && !busy) {
+      busy = true;
+      try {
+        await executeMission(staleQueued.id, onTick);
+      } catch {
+      } finally {
+        busy = false;
+      }
+      return;
+    }
     const due = queue.find(
       (x) => x.status === 'awaiting_time' && x.scheduledAt && x.scheduledAt <= Date.now() + 30_000
     );
@@ -959,6 +1037,7 @@ export function startAutopilotHeartbeat(onTick?: StageFn): () => void {
       return;
     }
     busy = true;
+    void keepAwake('publish');
     try {
       const m: HeadBotMission = { ...due, log: [...due.log] };
       pushLog(m, `⏰ Time ho gaya! Head Bot khud utha — video utha kar auto-publish kar raha hoon`, 'ok');
@@ -971,6 +1050,7 @@ export function startAutopilotHeartbeat(onTick?: StageFn): () => void {
       const q = loadQueue().map((x) => (x.id === due.id ? { ...x, status: 'failed' as MissionStatus, error: String(e?.message || e) } : x));
       persistQueue(q);
     } finally {
+      releaseAwake();
       busy = false;
     }
   };

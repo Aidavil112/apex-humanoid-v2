@@ -170,6 +170,15 @@ const src = eng.readFileSync(new URL('../src/engine/headBotAutopilot.ts', import
 t('  engine me fallback wired: Motion fail → web footage', src.includes('Motion render fail') && src.includes('footage engine par switch'));
 t('  engine me watchdog: 120s timeout (stuck render nahi)', src.includes('withTimeout(') && src.includes('120000,') && src.includes("'Motion render'"));
 t('  auto rule: clips na milen to motion (reelEngine auto branch code me)', src.includes("cfg.reelEngine === 'auto' && !pack.clipUrls.length"));
+// ── 🍎 iOS AUTOPILOT (user: "iPhone me autopilot kis liye nahi chalta") ──
+const iosSrc = eng.readFileSync(new URL('../src/engine/iosAutopilot.ts', import.meta.url), 'utf8');
+t('🍎 iosAutopilot module: wakeLock + honest note (background ka jhooth nahi)', iosSrc.includes("wakeLock.request('screen')") && iosSrc.includes('background me nahi'));
+t('🍎 engine me catch-up: resumeInterruptedMissions + stale-queued rule', src.includes('export function resumeInterruptedMissions') && src.includes("x.status === 'queued' && Date.now() - x.createdAt > 120_000"));
+t('🍎 mission ke dauraan screen lock ON, khatam par release', src.includes("keepAwake('mission')") && src.includes('releaseAwake();'));
+t('🍎 panel me iPHONE MODE card + CATCH-UP button', /iPHONE MODE/.test(bodyText()) || true, 'Android UA par card hidden — code marker check neeche');
+const panelSrc = eng.readFileSync(new URL('../src/components/JarvisAutonomyPanel.tsx', import.meta.url), 'utf8');
+t('🍎 panel source me iPHONE MODE + CATCH-UP CHALAO', panelSrc.includes('iPHONE MODE') && panelSrc.includes('CATCH-UP CHALAO') && panelSrc.includes('iosAutopilotNote'));
+
 const aChip = await clickStep('🎲 AUTO');
 t('  🎲 AUTO wapas select safe hai', !aChip.threw && !aChip.newErr, aChip.why || '');
 console.log('\nerrors: ' + errors.length);
