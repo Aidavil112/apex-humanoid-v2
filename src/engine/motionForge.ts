@@ -587,7 +587,19 @@ export interface MotionForgeResult {
 }
 
 export function motionForgeSupported(): { ok: boolean; reason?: string; mimes: string[] } {
-  const mimes = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4'];
+  // 🍎 iOS Safari: webm nahi banata — video/mp4 (H.264) hi ek rasta hai (iOS 14.5+).
+  //    Isliye iPhone/iPad par mp4 variants pehle probe hote hain, Android/Chrome par webm (chhota) pehle.
+  const isAppleTouch =
+    typeof navigator !== 'undefined' &&
+    (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      ((navigator as any).platform === 'MacIntel' && (navigator as any).maxTouchPoints > 1));
+  const mp4 = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4;codecs=h264',
+    'video/mp4',
+  ];
+  const webm = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  const mimes = isAppleTouch ? [...mp4, ...webm] : [...webm, ...mp4];
   if (typeof document === 'undefined' || typeof (globalThis as any).MediaRecorder === 'undefined') {
     return { ok: false, reason: 'Is browser me MediaRecorder nahi hai (WebView 5+ me hota hai)', mimes };
   }
