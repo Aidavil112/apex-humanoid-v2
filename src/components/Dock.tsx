@@ -22,6 +22,9 @@ interface DockProps {
   onOpenSocialStudio?: () => void;
   onOpenCore?: () => void;
   coreOpen?: boolean;
+  /** 🧩 AGENTS launcher — 🤖 Bot Studio · 🕸️ Workflow Agent · 📈 Trading Bot ek jagah */
+  onOpenAgents?: () => void;
+  agentsOpen?: boolean;
 }
 
 const PowerIcon: React.FC<{ className?: string }> = ({ className = 'w-4 h-4' }) => (
@@ -58,6 +61,8 @@ export const Dock: React.FC<DockProps> = ({
   onOpenSocialStudio,
   onOpenCore,
   coreOpen = false,
+  onOpenAgents,
+  agentsOpen = false,
 }) => {
   if (!poweredOn) {
     return (
@@ -203,6 +208,20 @@ export const Dock: React.FC<DockProps> = ({
           className="cursor-pointer w-9 h-9 rounded-full text-sm flex items-center justify-center transition-all border shrink-0 bg-[#00f5a0]/14 hover:bg-[#00f5a0]/25 border-[#00f5a0]/45 text-white"
         >
           🤖
+        </button>
+      )}
+
+      {/* 6b. 🧩 AGENTS — 🤖 Bot Studio · 🕸️ Workflow Agent · 📈 Trading Bot (alag-alag screens) */}
+      {onOpenAgents && (
+        <button
+          onClick={onOpenAgents}
+          aria-label="Agents: Bot Studio, Workflow Agent, Trading Bot"
+          title="🧩 AGENTS — Bot Studio · Workflow Agent · Trading Bot"
+          className={`cursor-pointer w-9 h-9 rounded-full text-sm flex items-center justify-center transition-all border shrink-0 ${
+            agentsOpen ? 'bg-[rgba(232,121,249,0.25)] border-[#e879f9] text-[#f5d0fe]' : 'bg-white/[0.04] hover:bg-white/10 border-white/10 text-white/85'
+          }`}
+        >
+          🧩
         </button>
       )}
 

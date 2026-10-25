@@ -15,6 +15,11 @@ import { HologramArmorCanvas, SuitPresetId } from './components/HologramArmorCan
 import { Toast } from './components/Toast';
 import { AudioWaveform } from './components/AudioWaveform';
 import { TradingBotModal } from './components/TradingBotModal';
+import { AgentHubSheet } from './components/AgentHubSheet';
+import { BotStudioModal } from './components/BotStudioModal';
+import { WorkflowAgentModal } from './components/WorkflowAgentModal';
+import { loadBots } from './engine/botStudio';
+import { loadWorkflows } from './engine/workflowAgent';
 import { ElevenLabsModal } from './components/ElevenLabsModal';
 import {
   SiriAssistantSheet,
@@ -303,6 +308,9 @@ export const App: React.FC = () => {
   // tha = 4 tap door, isliye user ko dikhta hi nahi tha. Ab Dock me 1-tap sheet.
   const [coreOpen, setCoreOpen] = useState(false);
   const [tradingBotOpen, setTradingBotOpen] = useState(false);
+  const [agentsHubOpen, setAgentsHubOpen] = useState(false);
+  const [botStudioOpen, setBotStudioOpen] = useState(false);
+  const [workflowOpen, setWorkflowOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
   // STRICT MANUAL PUSH-TO-TALK BY DEFAULT: Mic NEVER turns ON/OFF automatically in background!
   // Opens ONLY when user explicitly taps the Mic button, listens to 1 complete sentence, and stays 100% OFF!
@@ -2972,6 +2980,11 @@ export const App: React.FC = () => {
             audio.ensureCtx();
             setYoutubeOpen(true);
           }}
+          onOpenAgents={() => {
+            audio.ensureCtx();
+            setAgentsHubOpen((v) => !v);
+          }}
+          agentsOpen={agentsHubOpen || botStudioOpen || workflowOpen}
         />
       )}
 
@@ -3091,6 +3104,37 @@ export const App: React.FC = () => {
           />
 
           <Toast message={toastMessage} />
+
+          <AgentHubSheet
+            isOpen={agentsHubOpen}
+            onClose={() => setAgentsHubOpen(false)}
+            onOpenBotStudio={() => {
+              setAgentsHubOpen(false);
+              setBotStudioOpen(true);
+            }}
+            onOpenWorkflow={() => {
+              setAgentsHubOpen(false);
+              setWorkflowOpen(true);
+            }}
+            onOpenTrading={() => {
+              setAgentsHubOpen(false);
+              setTradingBotOpen(true);
+            }}
+            botCount={(() => { try { return loadBots().length; } catch { return 0; } })()}
+            wfCount={(() => { try { return loadWorkflows().length; } catch { return 0; } })()}
+          />
+
+          <BotStudioModal
+            isOpen={botStudioOpen}
+            onClose={() => setBotStudioOpen(false)}
+            onToast={(m) => toast(m, 2600)}
+          />
+
+          <WorkflowAgentModal
+            isOpen={workflowOpen}
+            onClose={() => setWorkflowOpen(false)}
+            onToast={(m) => toast(m, 2600)}
+          />
 
           <TradingBotModal
             isOpen={tradingBotOpen}

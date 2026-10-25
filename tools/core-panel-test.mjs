@@ -181,6 +181,21 @@ t('🍎 panel source me iPHONE MODE + CATCH-UP CHALAO', panelSrc.includes('iPHON
 
 const aChip = await clickStep('🎲 AUTO');
 t('  🎲 AUTO wapas select safe hai', !aChip.threw && !aChip.newErr, aChip.why || '');
+// ── 🤖 BOT STUDIO + 🕸️ WORKFLOW AGENT (user: "bot and workflow ai agent alag sa karo") ──
+const botSrc = eng.readFileSync(new URL('../src/engine/botStudio.ts', import.meta.url), 'utf8');
+const wfSrc = eng.readFileSync(new URL('../src/engine/workflowAgent.ts', import.meta.url), 'utf8');
+const botUi = eng.readFileSync(new URL('../src/components/BotStudioModal.tsx', import.meta.url), 'utf8');
+const wfUi = eng.readFileSync(new URL('../src/components/WorkflowAgentModal.tsx', import.meta.url), 'utf8');
+const hubUi = eng.readFileSync(new URL('../src/components/AgentHubSheet.tsx', import.meta.url), 'utf8');
+const dockSrc2 = eng.readFileSync(new URL('../src/components/Dock.tsx', import.meta.url), 'utf8');
+const appSrc = eng.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+t('🤖 Bot Studio: asli engines (research/render/vault/publish) + local bot store', botSrc.includes('renderMotionForgeVideo') && botSrc.includes('saveVideoToVault') && botSrc.includes('publishLatestVaultVideoToInstagram') && botSrc.includes('apex_bot_studio_v1'));
+t('🕸️ Workflow agent: nodes + fallback branch + honest "app khuli" note', wfSrc.includes('apex_workflow_agent_v1') && wfSrc.includes('fallback') && wfSrc.includes('jab app khuli ho'));
+t('🤖/🕸️ UI: alag-alag modals (ek me merge nahi)', botUi.includes('BOT STUDIO') && wfUi.includes('WORKFLOW AI AGENT') && !botUi.includes('WORKFLOW AI AGENT'));
+t('🧩 AgentHub: Bot Studio + Workflow + Trading — teen entry ek sheet', hubUi.includes('BOT STUDIO') && hubUi.includes('WORKFLOW AI AGENT') && hubUi.includes('TRADING BOT'));
+t('🧩 Dock me 🧩 launcher + App me teeno modals wired', dockSrc2.includes('onOpenAgents') && appSrc.includes('<AgentHubSheet') && appSrc.includes('<BotStudioModal') && appSrc.includes('<WorkflowAgentModal'));
+t('📈 Trading bot reachable (hub se setTradingBotOpen)', appSrc.includes('onOpenTrading={() => {') && appSrc.includes('setTradingBotOpen(true)'));
+
 console.log('\nerrors: ' + errors.length);
 if (errors.length) console.log([...new Set(errors)].slice(0, 8).map((e) => '   • ' + e).join('\n'));
 console.log(`\nRESULT ${pass}/${pass + fail}` + (fail ? `  ·  FAIL ${fail}` : ' ✅'));
