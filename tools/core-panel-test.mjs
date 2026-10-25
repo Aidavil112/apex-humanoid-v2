@@ -207,6 +207,14 @@ t('🏢 Desk UI: "kya dekha / kya banaya" per agent + live feed', deskUi.include
 t('🏢 Desk honest labels: writer template (LLM nahi) + skip reason', deskSrc.includes('LLM nahi') && deskSrc.includes("status: 'warn'") && deskSrc.includes('LLM nahi'));
 t('🏢 Hub me 4th entry (Desk) + App wiring', hubSrc2.includes('AGENT DESK') && appSrc.includes('<AgentDeskModal') && appSrc.includes('onOpenDesk'));
 
+// ── 💹 REAL DESK (user: "purana waisa hi, real wala add karo") ──
+const rdSrc = eng.readFileSync(new URL('../src/engine/realDesk.ts', import.meta.url), 'utf8');
+const rdUi = eng.readFileSync(new URL('../src/components/RealTradingDesk.tsx', import.meta.url), 'utf8');
+t('💹 Real Desk: worker route (/api/coindcx/balances + /trade) — iPhone par bhi chalta hai', rdSrc.includes("'/api/coindcx/balances'") && rdSrc.includes("'/api/coindcx/trade'"));
+t('🛡️ Real Desk safety: kill switch + per-order/per-day cap + literal REAL confirm', rdSrc.includes('killSwitch') && rdSrc.includes('maxOrderInr') && rdSrc.includes('maxDayInr') && rdSrc.includes("!== 'REAL'"));
+t('💹 Real Desk UI: keys masked + asli balance + 🔴 SEND REAL', rdUi.includes('ASLI BALANCE') && rdUi.includes('SEND REAL') && rdUi.includes('type="password"'));
+t('📈 Purana Trading Bot chhua nahi (file same, dono entry hub me)', appSrc.includes('<TradingBotModal') && appSrc.includes('<RealTradingDesk') && hubSrc2.includes('REAL DESK') && hubSrc2.includes('TRADING BOT (CoinDCX)'));
+
 console.log('\nerrors: ' + errors.length);
 if (errors.length) console.log([...new Set(errors)].slice(0, 8).map((e) => '   • ' + e).join('\n'));
 console.log(`\nRESULT ${pass}/${pass + fail}` + (fail ? `  ·  FAIL ${fail}` : ' ✅'));

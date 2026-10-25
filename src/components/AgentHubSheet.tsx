@@ -12,6 +12,7 @@ export function AgentHubSheet({
   onOpenWorkflow,
   onOpenTrading,
   onOpenDesk,
+  onOpenRealDesk,
   botCount,
   wfCount,
 }: {
@@ -21,6 +22,7 @@ export function AgentHubSheet({
   onOpenWorkflow: () => void;
   onOpenTrading: () => void;
   onOpenDesk: () => void;
+  onOpenRealDesk: () => void;
   botCount: number;
   wfCount: number;
 }) {
@@ -95,6 +97,14 @@ export function AgentHubSheet({
           badge="LIVE"
           gradient="from-fuchsia-500/20 to-purple-500/10"
           onClick={onOpenDesk}
+        />
+        <Item
+          emoji="💹"
+          title="REAL DESK (asli paisa)"
+          sub="CoinDCX real balance + real order · safety caps + kill switch (purana bot waisa hi)"
+          badge="₹ LIVE"
+          gradient="from-rose-500/20 to-orange-500/10"
+          onClick={onOpenRealDesk}
         />
         <Item
           emoji="📈"

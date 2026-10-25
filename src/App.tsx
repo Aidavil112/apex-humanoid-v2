@@ -19,6 +19,7 @@ import { AgentHubSheet } from './components/AgentHubSheet';
 import { BotStudioModal } from './components/BotStudioModal';
 import { WorkflowAgentModal } from './components/WorkflowAgentModal';
 import { AgentDeskModal } from './components/AgentDeskModal';
+import { RealTradingDesk } from './components/RealTradingDesk';
 import { loadBots } from './engine/botStudio';
 import { loadWorkflows } from './engine/workflowAgent';
 import { ElevenLabsModal } from './components/ElevenLabsModal';
@@ -313,6 +314,7 @@ export const App: React.FC = () => {
   const [botStudioOpen, setBotStudioOpen] = useState(false);
   const [workflowOpen, setWorkflowOpen] = useState(false);
   const [agentDeskOpen, setAgentDeskOpen] = useState(false);
+  const [realDeskOpen, setRealDeskOpen] = useState(false);
   const [menuTab, setMenuTab] = useState<'apps' | 'memory' | 'account' | 'phone' | 'voice' | 'moods' | 'settings'>('apps');
   // STRICT MANUAL PUSH-TO-TALK BY DEFAULT: Mic NEVER turns ON/OFF automatically in background!
   // Opens ONLY when user explicitly taps the Mic button, listens to 1 complete sentence, and stays 100% OFF!
@@ -2986,7 +2988,7 @@ export const App: React.FC = () => {
             audio.ensureCtx();
             setAgentsHubOpen((v) => !v);
           }}
-          agentsOpen={agentsHubOpen || botStudioOpen || workflowOpen || agentDeskOpen}
+          agentsOpen={agentsHubOpen || botStudioOpen || workflowOpen || agentDeskOpen || realDeskOpen}
         />
       )}
 
@@ -3126,6 +3128,10 @@ export const App: React.FC = () => {
               setAgentsHubOpen(false);
               setAgentDeskOpen(true);
             }}
+            onOpenRealDesk={() => {
+              setAgentsHubOpen(false);
+              setRealDeskOpen(true);
+            }}
             botCount={(() => { try { return loadBots().length; } catch { return 0; } })()}
             wfCount={(() => { try { return loadWorkflows().length; } catch { return 0; } })()}
           />
@@ -3146,6 +3152,13 @@ export const App: React.FC = () => {
             isOpen={agentDeskOpen}
             onClose={() => setAgentDeskOpen(false)}
             onToast={(m) => toast(m, 2600)}
+          />
+
+          <RealTradingDesk
+            isOpen={realDeskOpen}
+            onClose={() => setRealDeskOpen(false)}
+            onToast={(m) => toast(m, 2600)}
+            userId={activeUserId}
           />
 
           <TradingBotModal
