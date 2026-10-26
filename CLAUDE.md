@@ -4,9 +4,10 @@
 > aur kaam khatam hote hi **DONE LOG me ek line + (naya faisla ho to) DECISIONS me add kare**.
 > Ye file isliye hai taaki "kal jo ban gaya tha aaj dobara na banana pade".
 >
-> **Current ship: v6.6.14 (build 55)** — `APEX-AI-Pro.apk` 112,066,044 B,
-> md5 `cad9ba8f79888c6e24cfb74f88842c89`, GoFile `https://gofile.io/d/vDXnjUdd`.
-> Gates: `tools/verify-apk.sh` 13/13 ✅ · `tools/ui-test.sh` = tsc 0 + core 20/20 + click-sweep 0 exception.
+> **Current ship: v6.6.15 (build 58)** — `APEX-AI-Pro.apk` 145,662,865 B,
+> md5 `b98f60899c3587969a9ece04e62d961a`, GoFile `https://gofile.io/d/GoqvPSB4`.
+> Live PWA (same bundle): https://aidavil112.github.io/apex-humanoid-v2/
+> Gates: `tools/verify-apk.sh` 12/12 ✅ · `tools/ui-test.sh` = tsc 0 + **core 81/81** + click-sweep 0 exception.
 > Purane (update karne ke liye theek, ab ship nahi): 54 `z5GhVn1I` · 53 `9tk6b1iH` · 52 `XGfw1DTM` · 51 `SGFcTFB6` · 50 `kIajbS7j` · 49 `vKre37vh`.
 > ❌ KABHI mat bhejo: 48 `NNwICvcZ` · 47 `aCgqBH62` · `r7FYzR7c` · `emrcJmxn` (44–48 = launch par "App keeps stopping").
 > Ship karne ka ek command: `bash tools/build-apk.sh 6.6.15 56 && bash tools/upload-gofile.sh` (toolchain gayab ho to `tools/build-apk.sh` khud `tools/setup-toolchain.sh` chalata hai).
@@ -79,6 +80,12 @@ Android (custom WebView shell, no Capacitor) + React/Vite/TS Jarvis assistant:
 - Service worker / VitePWA **nahi** hai → reinstall hamesha fresh assets laata hai; freshness ka ekmatra signal app ka 🔎 badge hai.
 
 ## ✅ DONE LOG
+
+- **25/10/2026 · v6.6.15 build 58** — 🧩 AGENTS hub (🤖 Bot Studio · 🕸️ Workflow AI Agent · 🏢 AGENT DESK
+  "live screens + 👑 Boss" · 💹 REAL DESK asli CoinDCX) + 🎛️ REEL ENGINE (auto/motion/footage + 120s watchdog) +
+  🍎 iOS Wake Lock & catch-up + 🐙 GitHub push + gh-pages PWA deploy. Tests 81/81.
+  Reels: `APEX-DUO-REEL` (16s silent, `J87CH56F`) + `APEX-DUO-VOICE` (Hindi VO, `rpL2EtGB`).
+
 - v6.6.14 (2026-10-24): 🧭 **JARVIS SETUP — 3 KAAM** master card (CORE panel ke upar) — worker+KV / R2 / GitHub PAT ka live status (`srv.kvReady`, `describeR2(r2)`, `settings.ghToken`+`ghCheck`), har row me ▸ KAISE KAREIN (6 numbered steps), 🔗 dashboard link (`apexOpen`), 📋 copy (DEPLOY command / 4-line R2 template / push command), asli check button jo *wahin* ke engine ko bulaata hai (`pullServer`, `checkR2Access`, `checkGithubAccess` — state niche wale cards ke saath share hoti hai, duplicate UI nahi) aur 🗣️ BOLO (`apex:jarvis-say` → `speak()`). Upar "⏳ n BAKI / ✅ SAB TAIYAR" badge + `🔄 TINO KAAM CHECK KARO`. Voice: "setup kaise karein / kya baki hai / 3 kaam / r2 / pat" → panel khulta + row khulta + bola hua jawab (`apex:setup-jump`). 🔧 `tools/setup-toolchain.sh` (JDK17+build-tools+platform /var/tmp me; workspace me nahi — 128 MB snapshot cap) aur `build-apk.sh` uska auto-caller. Tests 48/48 (10 setup asserts) · sweep 89 buttons 0 exception · verify 12/12.
 - v6.6.13 (2026-10-24): 🎙️ **voice routing + stuck-lock audit** (user: "on/off bolta hun to dusra sunta hai", "thodi der me atak jaata hai"). Paaya gaya: (a) `power on` ka koi voice branch NAHI tha → baat general AI me chali jaati thi; (b) `pendingConfirmRef` ka YES/NO regex kisi bhi "…band karo / …chalu karo" ko us waqt ke pending kaam ka jawab samajh leta tha (ulta kaam); (c) `speak()` power-off par bina `onEnd` return karta tha aur native TTS end callback na aaye to `liveSpeakingRef`/`busyRef` hamesha ke liye true = mic sunta par jawab nahi; (d) busy hone par nayi baat chup-chaap DROP. Fixes: `pendingSpeakDoneRef` + `done()` once-guard + `min(28s, 3.2s + 62ms/char)` safety timer; 4s `keeper` interval (busy >22s ya speaking >30s → khud reset + toast + day-log); `queuedVoiceRef` (last-wins, finish par drain) + "⏳ queue me" badge; confirm sirf ≤5-word haan/na par aur `mentionsOtherTarget` ho to pending confirm cleanly chhod ke nayi baat route; 3-gram `isOwnVoiceEcho()` teeno STT paths par; naye branches: power ON, bare "off/band karo" (confirm ke saath), "awaaz reset karo" (`resetVoiceLock()` → `apex:voice-reset`); day-log triggers me "aaj kya kar rahe ho/kya kar raha hai/hisab deo"; panel me 12-flag busy-guard (55s) + "⏳ abhi chal raha hai" line + ↺ ATKA HUA CHHODO + 🎙️ AWAAZ RESET KARO; VOICE DOCTOR me `lock` + `follow` rows; DEV hooks `__apexVoiceSay/__apexVoiceHealth/__apexPanelBusy/__apexPanelStuck` (prod build me nahi jaate). Tests 38/38 (voice routing + guard firing), sweep 76 buttons 0 exception, verify 12/12.
 - v6.6.12 (2026-10-24): 🐞 **clip tap poora CORE sheet band kar raha tha** (hub overlay ka click backdrop tak bubble → `stopPropagation`). 📊 day-log ka `AAJ KA KAAM DIKHAO` button log load hote hi gayab ho jata tha → ab hamesha rehta hai aur `POORI LIST (n)` / `LIST CHHUPAO` toggle ban gaya (18 → 300 px scroll). 🔍 `YouTubeModal` research: English placeholder → Hinglish, `⏳ Dhundh raha hoon…` busy label, niche khaali ho ya server fail ho to **reason screen par** (chup no-op khatam). 🧪 jsdom tests repo me self-contained banaye (pehle `/var/tmp/smoke` par depend karte the) + `tools/ui-test.sh` single entry. 🔒 `verify-apk.sh` me app-id `com.apexhumanoid.pro6` + authority lock (source manifest v3 tha → duplicate-app disaster, ab gate pakadega). 📦 `tools/build-apk.sh` + `tools/upload-gofile.sh` likhe. Tests: core 20/20 · sweep 75 buttons 0 exception · tsc 0 · verify 13/13.
