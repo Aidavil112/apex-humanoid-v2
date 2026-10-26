@@ -202,7 +202,7 @@ const deskUi = eng.readFileSync(new URL('../src/components/AgentDeskModal.tsx', 
 const hubSrc2 = eng.readFileSync(new URL('../src/components/AgentHubSheet.tsx', import.meta.url), 'utf8');
 t('🏢 Agent HQ: 7 agents + 👑 boss, har ek ke asli engines (worker/render/vault/IG)', deskSrc.includes("id: 'scout'") && deskSrc.includes("id: 'post'") && deskSrc.includes("id: 'boss'") && deskSrc.includes('renderMotionForgeVideo') && deskSrc.includes('saveVideoToVault') && deskSrc.includes('publishLatestVaultVideoToInstagram'));
 t('🖥️ LIVE SCREENS: har agent ka apna device + screen lines (video jaisa)', deskSrc.includes("device: 'browser'") && deskSrc.includes("device: 'phone'") && deskSrc.includes('ScreenLine') && deskUi.includes('LIVE SCREENS') && deskUi.includes('DEVICE_TITLE'));
-t('👑 Boss console: order + report lines asli events se', deskSrc.includes('👑 Boss:') && deskUi.includes('command console'));
+t('👑 Boss console: order + report lines asli events se', deskSrc.includes('👑 Boss:') && /COMMAND CONSOLE|command console/.test(deskUi));
 t('🏢 Desk UI: "kya dekha / kya banaya" per agent + live feed', deskUi.includes('KYA DEKHA / PADHA') && deskUi.includes('KYA BANAYA') && deskUi.includes('LIVE FEED'));
 t('🏢 Desk honest labels: writer template (LLM nahi) + skip reason', deskSrc.includes('LLM nahi') && deskSrc.includes("status: 'warn'") && deskSrc.includes('LLM nahi'));
 t('🏢 Hub me 4th entry (Desk) + App wiring', hubSrc2.includes('AGENT DESK') && appSrc.includes('<AgentDeskModal') && appSrc.includes('onOpenDesk'));
@@ -214,6 +214,13 @@ t('💹 Real Desk: worker route (/api/coindcx/balances + /trade) — iPhone par 
 t('🛡️ Real Desk safety: kill switch + per-order/per-day cap + literal REAL confirm', rdSrc.includes('killSwitch') && rdSrc.includes('maxOrderInr') && rdSrc.includes('maxDayInr') && rdSrc.includes("!== 'REAL'"));
 t('💹 Real Desk UI: keys masked + asli balance + 🔴 SEND REAL', rdUi.includes('ASLI BALANCE') && rdUi.includes('SEND REAL') && rdUi.includes('type="password"'));
 t('📈 Purana Trading Bot chhua nahi (file same, dono entry hub me)', appSrc.includes('<TradingBotModal') && appSrc.includes('<RealTradingDesk') && hubSrc2.includes('REAL DESK') && hubSrc2.includes('TRADING BOT (CoinDCX)'));
+
+// ── 💎 3D NEON DASHBOARD look (user: reel jaisa "3D Dashboard + AI") ──
+const deskUi3 = eng.readFileSync(new URL('../src/components/AgentDeskModal.tsx', import.meta.url), 'utf8');
+t('💎 HQ 3D: perspective tilt + neon glow + glass cards (CSS only, koi naya dep nahi)', deskUi3.includes('perspective(760px) rotateX') && deskUi3.includes('hq-win.live') && deskUi3.includes('box-shadow'));
+t('💎 HQ 3D: 3D typography title (gradient + glow)', deskUi3.includes('hq-title') && deskUi3.includes('background-clip: text'));
+t('📊 HQ analytics cards + sparkline bars', deskUi3.includes('Agents done') && deskUi3.includes('hq-spark') && deskUi3.includes('LIVE FEED — BOSS ORDERS'));
+t('💎 3D FLOOR title + same features intact (boss console + live screens + floor)', deskUi3.includes('APEX HQ · 3D FLOOR') && deskUi3.includes('COMMAND CONSOLE') && deskUi3.includes('LIVE SCREENS') && deskUi3.includes('FLOOR'));
 
 console.log('\nerrors: ' + errors.length);
 if (errors.length) console.log([...new Set(errors)].slice(0, 8).map((e) => '   • ' + e).join('\n'));
