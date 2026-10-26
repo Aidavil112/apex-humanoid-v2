@@ -1,6 +1,6 @@
 # APEX BRAIN FILE
 
-_Auto-updated by APEX Jarvis. Last write: 24/10/2026, 08:55 pm IST.
+_Auto-updated by APEX Jarvis. Last write: 26/10/2026, 12:10 am IST.
 
 **AI agents ke liye Nirdesh:** ye file project ka persistent memory hai. Session ke start par
 ise PADHO, RULES follow karo, DECISIONS dobara mat poochho, aur kaam khatam hote hi DONE LOG me
@@ -9,13 +9,18 @@ ye file badalti hai — isliye format kharab mat karo.)
 
 ## 📦 SHIP (abhi ye version current hai)
 
-- **v6.6.15 · build 56** → https://gofile.io/d/DreXyUYT · `/home/user/APEX-AI-Pro.apk`
-  · 112,074,236 B · md5 `f9c8b1942ae5d04cbad071ac99d5a9ce`
-  · gates: `tools/verify-apk.sh` 12/12 ✅ · `tools/ui-test.sh` core **60/60** ✅ + click-sweep 93 buttons 0 exception · tsc 0 errors
+- **v6.6.15 · build 58** → https://gofile.io/d/GoqvPSB4 · `/home/user/APEX-AI-Pro.apk`
+  · 145,662,865 B · md5 `b98f60899c3587969a9ece04e62d961a`
+  · gates: `tools/verify-apk.sh` 12/12 ✅ · `tools/ui-test.sh` core **81/81** ✅ + click-sweep 0 exception · tsc 0 errors
+  · 🌐 live PWA (same bundle): https://aidavil112.github.io/apex-humanoid-v2/ (`gh-pages` branch)
   · naya: 🎛️ **REEL ENGINE** (`reelEngine: auto|footage|motion` + `motionStyle`) — auto/daily missions ka
     video Motion Forge (OneTake-look, phone par) se banega; fail/120s timeout par web footage par
     auto-fallback; UI Motion Forge card ke ANDAR (chips + 🤖 AUTO REEL CHALAO + 📥/📤 toggle + 180s watchdog)
-- Purane (update ke liye theek, par ab ship NAHI): 55 `vDXnjUdd` · 54 `z5GhVn1I` · 53 `9tk6b1iH` · 52 `XGfw1DTM`
+  · naya (build 57–58): 🧩 **AGENTS hub** — 🤖 Bot Studio · 🕸️ Workflow AI Agent · 🏢 **AGENT DESK**
+    (video jaisa scene: har agent ka apna LIVE screen + 👑 Boss console) · 💹 **REAL DESK** (CoinDCX asli
+    balance + asli order: literal `REAL` confirm, per-order ₹500 / per-day ₹2000 cap, kill switch, min ₹100)
+    · 🍎 iOS Wake Lock + catch-up · 🎛️ REEL ENGINE (auto/motion/footage + 120s watchdog)
+- Purane (update ke liye theek, par ab ship NAHI): 57 `G26b0KNe` · 56 `DreXyUYT` · 55 `vDXnjUdd` · 54 `z5GhVn1I` · 53 `9tk6b1iH` · 52 `XGfw1DTM`
 - ❌ KABHI mat bhejo: 48 `NNwICvcZ`, 47 `aCgqBH62`, `r7FYzR7c`, `emrcJmxn` (build 44–48 = launch crash)
 
 ## ⚖️ RULES (user preferences — never break)
@@ -85,6 +90,22 @@ ye file badalti hai — isliye format kharab mat karo.)
 
 ## ✅ DONE LOG
 
+- [25–26/10/2026] 🧩 **AGENTS hub + 💹 REAL DESK + 🍎 iOS support + 🎬 reels.** (a) `src/engine/botStudio.ts` —
+  user ke apne bots (research → render → vault → publish), har step asli engine, fail par "skip + reason".
+  (b) `src/engine/workflowAgent.ts` — nodes chain + fallback branch + per-node status/ms.
+  (c) `src/engine/agentDesk.ts` + `AgentDeskModal` — 🏢 **AGENT DESK**: 7 agents (👑 Boss, 🕵️ Scout, ✍️ Writer,
+  🎨 Art, 🎬 Renderer, 🔍 QA, 💾 Librarian, 📤 Postman), **har agent ka apna live screen** (chrome/notes.md/render.app/
+  phone), screen lines asli action ke saath, live feed + kya dekha / kya banaya.
+  (d) `src/engine/realDesk.ts` + `RealTradingDesk` — **asli paisa**: worker route `/api/coindcx/balances` + `/trade`,
+  iPhone par bhi chalta hai; safety = literal `REAL` confirm + caps + kill switch + device log. **Purana TradingBotModal
+  chhua nahi** (paper view waisa hi). Asli test (₹0 kharch): worker `configured:true/LIVE`, balance live:true,
+  trade → CoinDCX ka asli error "Spot INR balance (₹0.00) minimum order (₹100) se kam hai" = route asli hai.
+  (e) `src/engine/iosAutopilot.ts` — Screen Wake Lock + `resumeInterruptedMissions()` catch-up + stale-queued resume.
+  (f) GitHub push live (6 commits) + `gh-pages` PWA deploy (Safari → Add to Home Screen, iPhone install).
+  (g) Reels: `APEX-3D-REEL` (16s, `6bROuBRs`), `APEX-DUO-REEL` (16s silent, `J87CH56F`), `APEX-DUO-VOICE`
+  (Hindi VO 13s, `rpL2EtGB`). `tools/motion-gfx3d-duo.py` = DUO text/CTA edit.
+  **Rollback pattern ab pakka:** har turn `git fetch origin main && git reset --hard origin/main` (workspace
+  purane snapshot par chala jaata hai; `.git/config` snapshot me save nahi hota → remote dobara add karna padta hai).
 - [25/10/2026 2:10am] ⚠️ **Sandbox rollback pakda + restore**: workspace purane snapshot par gaya tha → `git log` me sirf `aa2f4e0` (mere commit ke objects gayab) aur 3 src file undo (`reelEngine`, panel ka `REEL ENGINE`, buildInfo 6.6.14/55) — khatarnak: App.tsx ki voice branch bachi rahi isliye repo typecheck toota, aur local APK build 55 par palat gaya tha. Fix: 3 file dobara apply → `tools/ui-test.sh` tsc 0 + core **60/60** + sweep 93 buttons 0 exception → `build-apk.sh 6.6.15 56` → `verify-apk.sh` 12/12 → **APK ke andar feature grep se proof** (`assets/www/assets/index-BHP0Ju-m.js` me "REEL ENGINE" ×2, "reelEngine" ×4). Fresh ship copy: https://gofile.io/d/DreXyUYT · 112,074,236 B · md5 `d02dfd7805f96af6ff1b74d79ac97d33` (purana ZBmpMyeG bhi same 6.6.15/56). **Rule:** ship ke turant baad commit + docs me feature ka poora description (git objects bhi kho sakte hain); rollback-shak par pehle 3 grep: src feature marker, buildInfo version, APK md5.
 - [25/10/2026 2:45am] 🔁 `src/` dobara rollback (teesri baar nahi ladunga) → **APK rebuild SKIP** (adhoore src se feature khonā risk); pending patches `tools/PENDING-SRC-FIXES.md` me + naya `tools/r2-paste-test.mjs` (6 asserts, shipped app ke liye bhi). **2 asli bug nikle:** (a) `parseR2Paste` ka `gluedAkid` fallback keys-gaib par **pub-<32hex> hash ko Access Key ID** bana leta hai → `SignatureDoesNotMatch`; (b) app ka `📋 4-LINE TEMPLATE` chhote labels (`access:`/`secret:`) likhta hai jo regex padhता ही नहीं → **secret template se kabhi bharta hi nahi tha**. User-facing rule abhi: R2 VAULT me **FULL labels** — `access key id:` / `secret access key:`. Fix agle build (6.6.16/57) me.
 - v6.6.15 (build 56): 🎛️ REEL ENGINE — `AutoPilotSettings.reelEngine/motionStyle` + `executeMission` STEP 2+3 engine router (motion = `renderMotionForgeVideo` 1080×1920 → `blobToBase64` → fail/timeout par footage fallback, `withTimeout(120s)`), Jarvis panel ke Motion Forge card me 🎲//✨ chips +  AUTO REEL CHALAO (runMissionNow) + 📥 SIRF SAVE ↔ 📤 SAVE+PUBLISH + live stage line + 180s button watchdog, voice "reel engine motion karo". **⚙️ Build-chain fix:** `tools/build-apk.sh` ab source `android-native/AndroidManifest.xml` bhi sync karta hai (warna verify ka "APK version == source manifest" gate hamesha false-fail karta tha) aur `buildInfo.ts` ka version hardcoded hai — har ship par bump zaroori. **☁️ Upload fix:** GoFile `/servers` kabhi `noServer` deta hai → `upload-gofile.sh` ab known stores (store9/store1/…) direct try karta hai (0x0.st = uploads disabled, catbox = Invalid uploader, pixeldrain = auth, tmpfiles = 502 → naya `tools/upload-mirror.sh`).
@@ -110,7 +131,10 @@ ye file badalti hai — isliye format kharab mat karo.)
 - [24/10/2026 9:55pm] 🎬 OneTake-look reel renderer repo me aa gaya: `tools/reel-render.py` (PIL+numpy+static ffmpeg; 1080×1920/12 s/31 s render; spring+area-preserving squash+word-pop+count-up+whip+tmix motion blur; numpy 128-BPM beat). Sample: `preview/APEX-REEL-DEMO.mp4`. Original OneTake skill GPU (CUDA/NVENC/Remotion) mangta hai — wahi wajah ki phone/app me Motion Forge hi iska equivalent hai. ⚠️ 1px scanline pass moiré banata hai (downscale par) — hata diya; `tmix` me `c0/c1` nahi, `weights` use karo.
 - [24/10/2026 9:55pm] 📺 YouTube connect ab sirf 2 secret door: `YOUTUBE_CLIENT_ID` + `YOUTUBE_CLIENT_SECRET` (worker me `/yt/auth /yt/callback /yt/upload /yt/plan /yt/status /yt/voice` already hain; `/yt/callback` refresh token **apne aap KV** me save karta hai `yt:refresh_token` — KV binding ka pehla asli faayda). Poora naksha: `YOUTUBE-API-KYA-KAREGA.txt`. Live: `/yt/auth` → "Step 1 Needed: YOUTUBE_CLIENT_ID", `/health` → `youtubeUploadAuth:false`. ⚠️ Secret chat me mat bhejo (mask ho jaate hain) — box me paste.
 
-- [24/10/2026] 📱 Phone par v6.6.12 (53) install karo — settings me "APEX AI 6.6.12" aur app me `✅ PURA LATEST? CHECK KARO` se proof.
+- [26/10/2026] 📱 **build 58** install karo (https://gofile.io/d/GoqvPSB4) — purani app ke UPAR update (same keystore, data safe); proof: app me `✅ PURA LATEST? CHECK KARO` → 6.6.15/58.
+- [26/10/2026] 💹 **REAL DESK live test ho gaya, order nahi laga**: CoinDCX account me sirf ₹0.0015 hai — spot minimum ₹100. Account me ₹100+ daal ke pehla real order (`🔴 SEND REAL`, literal `REAL`) tabhi lagega.
+- [26/10/2026] ⚠️ **GitHub PAT chat me aa chuka hai → revoke karo** (Settings → Developer settings → Tokens). Push khatam ho chuka; naye push ke liye naya token.
+- [26/10/2026] 🎬 **AGENT DESK / Bot Studio / Workflow abhi device par test nahi hue** — sirf Node/jsdom asserts (81/81) + bundle grep. Phone par ek run chahiye (asli render + Vault).
 - [24/10/2026] 🪣 R2 setup abhi adhura (screenshot me red "missing: endpoint/keys") → panel ke `🪣 R2 VAULT` card me dashboard blob paste → `✂️ PASTE SE BHARO` → `🧪 R2 CHECK`. Sandbox se `r2.cloudflarestorage.com` TLS-block tha, isliye data-plane yahin test nahi ho paya.
 - [24/10/2026] ✅ KV **namespace ban gaya** (user ne dashboard se): id `e31bee0bb26c4fcc90154f80e1ba78da` — `cloudflare-bot/wrangler.toml` **aur** root `wrangler.jsonc` (iska `kv_namespaces` khali tha — root se deploy par binding gayab ho jaati, trap band) dono me bhardi gayi.
 - [24/10/2026] ✅ `worker.js` me `withKVAlias(env)` (fetch+scheduled entry): dashboard ka default Variable name `KV_BINDING` ho to bhi chalega — alias test 5/5, `node --check` OK. BAKI SIRF: Worker → Settings → Bindings → Add → **KV namespace** → Variable name `APEX_KV` → namespace `APEX KV` → **Save and Deploy**; tab `/jarvis/brain` → `{"ok":true}` (abhi old code live: `APEX_KV binding missing`).
